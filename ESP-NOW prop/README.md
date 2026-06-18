@@ -1,359 +1,174 @@
 # ESP-NOW Network for ESP32
 
-A comprehensive ESP-NOW network framework for ESP32 development. This workspace provides a complete development environment for multi-node wireless communication using the ESP-NOW protocol.
-
-## Overview
-
-ESP-NOW is a fast wireless communication protocol that supports low-power devices. It allows for:
-
-- **Low Latency**: Minimal delay between nodes
-- **Low Power Consumption**: Efficient for battery-operated devices
-- **Wide Coverage**: Works across standard WiFi channels
-- **Simple Pairing**: No complex connection setup
+A complete PlatformIO/Arduino ESP-NOW framework for ESP32 nodes. The project includes a sender, receiver, and mesh relay example that share one packet format, dynamic peer discovery, ACK/PONG replies, peer timeout tracking, and safe payload sizing for ESP-NOW's 250-byte frame limit.
 
 ## Project Structure
 
 ```
-SpeedX/
-├── include/                    # Header files
-│   ├── espnow_config.h        # Core configuration and message types
-│   ├── espnow_utils.h         # Utility functions for ESP-NOW operations
-│   └── peer_manager.h         # Peer tracking and management
+ESP-NOW prop/
+├── include/
+│   ├── espnow_config.h        # Message types, packet format, constants
+│   ├── espnow_utils.h         # WiFi, ESP-NOW, payload, and send helpers
+│   └── peer_manager.h         # Dynamic peer registry and timeout tracking
 ├── src/
-│   ├── node_sender/           # Example sender node
-│   │   └── main.cpp
-│   ├── node_receiver/         # Example receiver node
-│   │   └── main.cpp
-│   └── node_mesh/             # Example mesh node with beacons
-│       └── main.cpp
-├── lib/                        # External libraries
-├── docs/                       # Documentation
-├── config/                     # Configuration files
-├── platformio.ini             # Build configuration
-└── README.md                  # This file
+│   ├── node_sender/main.cpp   # Node 1: discovers Node 2 and sends sensor data
+│   ├── node_receiver/main.cpp # Node 2: receives data and replies with ACK/PONG
+│   └── node_mesh/main.cpp     # Node 3: beacons, tracks peers, forwards traffic
+├── platformio.ini
+└── README.md
 ```
 
-## Features
+## What Is Finished
 
-### Core Components
+- Packet size is capped at one ESP-NOW frame.
+- Messages are sent with variable length instead of always sending a padded struct.
+- Broadcast peer setup is automatic.
+- Nodes add peers dynamically from inbound packets before replying.
+- Sender discovery no longer requires a hard-coded receiver MAC.
+- Receiver validates payload sizes and acknowledges DATA/MESH_DATA.
+- Mesh node sends beacons, suppresses duplicates, and forwards messages with TTL/hop tracking.
+- PlatformIO environments build one node entry point at a time.
 
-1. **ESPNowUtils**: Static utility class for common ESP-NOW operations
-   - WiFi initialization
-   - Peer management
-   - Message sending/broadcasting
-   - RSSI strength calculation
-   - Pre-built message creation
+## Node Roles
 
-2. **PeerManager**: Track and manage connected peers
-   - Register peers dynamically
-   - Monitor signal strength (RSSI)
-   - Timeout detection
-   - Peer statistics
+### Node 1: Sender
 
-3. **Message Types**: Six predefined message types
-   - `PING/PONG`: Connection testing
-   - `DATA`: Sensor data transmission
-   - `CONFIG`: Configuration changes
-   - `ACK`: Acknowledgment messages
-   - `MESH_BEACON`: Network discovery
-   - `MESH_DATA`: Mesh routing
+- Broadcasts discovery PING frames for Node 2.
+- Learns Node 2's MAC from PONG/ACK replies.
+- Sends `SensorDataPayload` to Node 2 every 5 seconds.
+- Uses unicast after discovery and broadcast while the target is unknown.
+- Prints peer status every 5 seconds.
 
-### Example Nodes
+### Node 2: Receiver
 
-#### Sender Node
+- Listens for PING, DATA, MESH_DATA, ACK, and beacon frames.
+- Dynamically registers the sender or mesh peer.
+- Responds to PING with PONG.
+- Validates sensor payloads and replies to DATA/MESH_DATA with ACK.
+- Ignores messages addressed to other node IDs.
 
-- Sends sensor data periodically
-- Sends to a single receiver
-- Demonstrates data transmission and callbacks
+### Node 3: Mesh
 
-#### Receiver Node
-
-- Receives and processes messages
-- Manages peer connections
-- Sends acknowledgments
-- Tracks message history
-
-#### Mesh Node
-
-- Broadcasts periodic beacons
-- Detects network topology
-- Forwards messages
-- Scalable for multiple nodes
-
-## Getting Started
-
-### Prerequisites
-
-- ESP32 development board(s)
-- USB cable for flashing
-- VS Code with PlatformIO extension
-- macOS/Linux/Windows
-
-### Installation
-
-1. **Install PlatformIO**
-   - Open VS Code
-   - Go to Extensions → Search "PlatformIO IDE"
-   - Install the extension
-
-2. **Update Board Definitions**
-   - Open the project in VS Code
-   - PlatformIO will auto-detect and install ESP32 board support
-
-3. **Configure MAC Addresses**
-   - Edit `src/node_sender/main.cpp` line 12
-   - Replace `RECEIVER_MAC` with actual receiver ESP32 MAC address
-   - To find MAC address, flash any node and check serial output
-
-### Building & Flashing
-
-#### Using PlatformIO CLI
-
-```bash
-# Build sender node
-pio run -e esp32_node1 -t build
-
-# Flash sender node
-pio run -e esp32_node1 -t upload
-
-# Build receiver node
-pio run -e esp32_node2 -t build
-
-# Flash receiver node
-pio run -e esp32_node2 -t upload
-
-# Monitor serial output
-pio device monitor -e esp32_node1
-```
-
-#### Using VS Code
-
-1. Open Command Palette (`Cmd+Shift+P`)
-2. Type "PlatformIO: Build" or "PlatformIO: Upload"
-3. Monitor output with "PlatformIO: Monitor"
-
-### Finding ESP32 MAC Address
-
-Each example node prints its MAC address on startup:
-
-```
-Device MAC: 34:85:18:12:34:56
-```
-
-Use this address in the receiver configuration.
-
-## Configuration
-
-### platformio.ini
-
-The `platformio.ini` file contains build profiles for different nodes:
-
-```ini
-[env:esp32_node1]      # Sender
-[env:esp32_node2]      # Receiver
-[env:esp32_mesh]       # Mesh node
-```
-
-**Edit the COM ports** to match your system:
-
-- **macOS**: `/dev/cu.SLAB_USBtoUART`, `/dev/cu.usbserial-*`
-- **Linux**: `/dev/ttyUSB0`, `/dev/ttyACM0`
-- **Windows**: `COM3`, `COM4`
-
-### espnow_config.h
-
-Core configuration parameters:
-
-```cpp
-#define ESPNOW_CHANNEL 1              // WiFi channel (1-13)
-#define MAX_PEERS 20                  // Maximum peer connections
-#define MAX_PAYLOAD_SIZE 250          // Message payload size
-```
+- Broadcasts mesh beacons every 10 seconds.
+- Registers peers seen through any valid message.
+- Handles messages addressed to Node 3 locally.
+- Forwards messages for other node IDs to a known destination MAC or by broadcast.
+- Uses TTL, hop count, and a small duplicate cache to reduce loops.
 
 ## Message Protocol
 
-### Message Structure
+`ESPNowMessage` is a packed 250-byte maximum frame:
 
 ```cpp
 struct ESPNowMessage {
-    MessageType type;           // Message type (PING, DATA, etc)
-    uint8_t sender_id;         // Sending node ID
-    uint8_t receiver_id;       // Receiving node ID (0xFF = broadcast)
-    uint8_t sequence;          // Sequence number for ordering
-    uint32_t timestamp;        // Milliseconds since startup
-    uint8_t rssi;              // Signal strength (RSSI)
-    uint16_t data_length;      // Payload size
-    uint8_t payload[250];      // Message data
+    MessageType type;
+    uint8_t sender_id;
+    uint8_t receiver_id;
+    uint8_t sequence;
+    uint32_t timestamp;
+    uint8_t rssi;
+    uint16_t data_length;
+    uint8_t ttl;
+    uint8_t hop_count;
+    uint8_t flags;
+    uint8_t payload[MAX_PAYLOAD_SIZE];
 };
 ```
 
-### Example: Sending Sensor Data
+Important constants:
 
 ```cpp
-ESPNowMessage msg{};
-msg.type = MessageType::DATA;
-msg.sender_id = NODE_ID;
-msg.receiver_id = 2;
-msg.sequence = sequence++;
-msg.timestamp = millis();
-msg.data_length = 8;
-
-// Pack sensor data
-float temperature = 25.5;
-uint16_t humidity = 60;
-memcpy(msg.payload, &temperature, 4);
-memcpy(msg.payload + 4, &humidity, 2);
-
-// Send
-ESPNowUtils::sendMessage(receiver_mac, msg);
+constexpr uint8_t ESPNOW_CHANNEL = 1;
+constexpr uint8_t ESPNOW_BROADCAST_ID = 0xFF;
+constexpr uint8_t ESPNOW_DEFAULT_TTL = 4;
+constexpr size_t ESPNOW_MAX_FRAME_SIZE = 250;
+constexpr size_t MAX_PAYLOAD_SIZE = 236;
 ```
 
-## Peer Management
-
-The `PeerManager` class tracks connected nodes:
+Sensor data uses a typed payload:
 
 ```cpp
-PeerManager manager;
-
-// Register a peer
-manager.registerPeer(mac_address, peer_id);
-
-// Get peer by ID
-PeerInfo* peer = manager.getPeerById(node_id);
-
-// Update signal strength
-manager.updatePeerRssi(mac_address, rssi_value);
-
-// Check for timeouts
-manager.checkPeerTimeout(30000);  // 30 second timeout
-
-// Get active peer count
-int count = manager.getActivePeerCount();
+struct SensorDataPayload {
+    float temperature_c;
+    uint16_t humidity_percent;
+    uint16_t battery_mv;
+};
 ```
 
-## Callbacks
+## Build Environments
 
-### Send Callback
+The PlatformIO file exposes one environment per node:
 
-```cpp
-void onDataSent(const uint8_t* mac_addr, esp_now_send_status_t status) {
-    if (status == ESP_NOW_SEND_SUCCESS) {
-        Serial.println("Message sent successfully");
-    }
-}
-
-esp_now_register_send_cb(onDataSent);
+```ini
+[env:esp32_node1]  # sender
+[env:esp32_node2]  # receiver
+[env:esp32_mesh]   # mesh relay
 ```
 
-### Receive Callback
+Build them from the project directory:
 
-```cpp
-void onDataReceived(const uint8_t* mac, const uint8_t* data, int data_len) {
-    ESPNowMessage* msg = (ESPNowMessage*)data;
-    // Process message
-}
-
-esp_now_register_recv_cb(onDataReceived);
+```bash
+pio run -e esp32_node1
+pio run -e esp32_node2
+pio run -e esp32_mesh
 ```
+
+Upload examples:
+
+```bash
+pio run -e esp32_node1 -t upload
+pio run -e esp32_node2 -t upload
+pio run -e esp32_mesh -t upload
+```
+
+Monitor serial output:
+
+```bash
+pio device monitor -e esp32_node1
+```
+
+Update the `monitor_port` and `upload_port` entries in `platformio.ini` for your machine. Common port names are `/dev/cu.SLAB_USBtoUART`, `/dev/ttyUSB0`, `/dev/ttyACM0`, and `COM3`.
+
+## Startup Flow
+
+1. Flash Node 2 with `esp32_node2`.
+2. Flash Node 1 with `esp32_node1`.
+3. Node 1 broadcasts a PING addressed to Node 2.
+4. Node 2 registers Node 1 and replies with PONG.
+5. Node 1 sends future sensor packets to Node 2 by unicast.
+6. Optional mesh nodes can be flashed with `esp32_mesh`; they beacon and forward traffic for other IDs.
+
+All nodes print their MAC address on boot:
+
+```text
+Device MAC: 34:85:18:12:34:56
+```
+
+The MAC is useful for diagnostics, but the sender/receiver path does not require copying it into source code.
+
+## Extending The Network
+
+To add another node:
+
+1. Pick a unique `NODE_ID`.
+2. Add a PlatformIO environment with a source filter for the new node directory.
+3. Use `ESPNowUtils::createDataMessage()` or `createMeshDataMessage()` for payloads.
+4. Call `ESPNowUtils::parseMessage()` in receive callbacks.
+5. Register inbound peers with `PeerManager::registerPeer()` and `updatePeerActivity()`.
 
 ## Troubleshooting
 
-### Board Not Detected
+- Confirm every node uses the same `ESPNOW_CHANNEL`.
+- Build the correct PlatformIO environment for the node role.
+- If replies fail, check that inbound peers are being printed in the serial monitor.
+- If a node is quiet, verify the board and upload ports in `platformio.ini`.
+- If mesh traffic loops, lower `ESPNOW_DEFAULT_TTL` or increase direct discovery between nodes.
 
-- Check USB cable connection
-- Install CH340 drivers (common ESP32 boards use this)
-- Verify port in `platformio.ini`
+## References
 
-### Messages Not Received
-
-- Ensure both boards are on the same WiFi channel (default: 1)
-- Verify MAC addresses are correct
-- Add peers using `ESPNowUtils::addPeer()`
-
-### Compilation Errors
-
-- Ensure Arduino framework is installed
-- Check `platformio.ini` has correct ESP32 board definition
-- Clean build: `pio run -e esp32_node1 -t clean`
-
-### Serial Output Issues
-
-- Try different baud rates (default: 115200)
-- Use `pio device monitor --baud 115200`
-
-## Advanced Features
-
-### Encryption
-
-Enable encryption for messages:
-
-```cpp
-// Set Primary Master Key (PMK)
-uint8_t pmk[16] = {0x08, 0x09, 0x0a, ...};
-esp_now_set_pmk(pmk);
-
-// Enable encryption on peer
-esp_now_peer_info_t peer{};
-peer.encrypt = true;  // Enable encryption
-esp_now_add_peer(&peer);
-```
-
-### Mesh Routing
-
-The mesh node example demonstrates basic routing:
-
-1. Each node broadcasts periodic beacons
-2. Beacons contain peer count and node status
-3. Messages are forwarded to non-matching receivers
-4. Topology can be discovered from beacon data
-
-### Custom Data Types
-
-Extend the message protocol for your needs:
-
-```cpp
-struct CustomData {
-    int32_t temperature;  // x 100 (25.5°C = 2550)
-    uint16_t humidity;
-    uint8_t battery_level;
-};
-
-// In your message:
-msg.data_length = sizeof(CustomData);
-CustomData* data = (CustomData*)msg.payload;
-data->temperature = 2550;
-```
-
-## Performance Metrics
-
-- **Message Latency**: < 1ms average
-- **Range**: ~250m line-of-sight (depends on obstacles)
-- **Power Consumption**: ~80mA transmit, ~20mA receive
-- **Bandwidth**: Up to 1Mbps (practical: 100-200 kbps)
-- **Payload Size**: 250 bytes max
-
-## Additional Resources
-
-- [ESP-NOW Getting Started](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/network/esp_now.html)
-- [ESP32 Datasheet](https://www.espressif.com/sites/default/files/documentation/esp32_datasheet_en.pdf)
-- [Arduino ESP32 Core](https://github.com/espressif/arduino-esp32)
-- [PlatformIO Documentation](https://docs.platformio.org/)
+- [ESP-NOW Programming Guide](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/network/esp_now.html)
+- [PlatformIO ESP32 Platform](https://docs.platformio.org/en/latest/platforms/espressif32.html)
 
 ## License
 
 This project is provided as-is for educational and development purposes.
-
-## Contributing
-
-To extend this framework:
-
-1. Add new message types to `MessageType` enum
-2. Create handler functions in `onDataReceived`
-3. Implement peer communication patterns
-4. Document new features
-
----
-
-**Last Updated**: June 2026  
-**ESP32 Core Version**: 2.0.x+  
-**Arduino Framework**: Latest
