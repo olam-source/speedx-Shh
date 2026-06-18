@@ -28,7 +28,8 @@ ESP-NOW prop/
 ├── include/
 │   ├── espnow_config.h        # Message types, packet + payload formats, constants
 │   ├── espnow_utils.h         # WiFi, ESP-NOW, payload, send, and print helpers
-│   └── peer_manager.h         # Dynamic peer registry and timeout tracking
+│   ├── peer_manager.h         # Dynamic peer registry and timeout tracking
+│   └── athlete_sensors.h      # Sensor abstraction (simulated or real MAX30102/MPU6050/GPS)
 ├── src/
 │   ├── athlete_wearable/      # Body-worn node: reads metrics, gossips them to the hub
 │   ├── coach_hub/             # Central USB adapter: mesh sink + dashboard bridge
@@ -38,6 +39,7 @@ ESP-NOW prop/
 ├── dashboard/
 │   ├── coach_dashboard.html   # One-screen live dashboard (Web Serial, no install)
 │   └── README.md
+├── HARDWARE.md                # Parts list, prices, wiring, pin flags
 ├── platformio.ini
 └── README.md
 ```
@@ -207,13 +209,22 @@ cmd <n> <t> <p>  # raw form: command number / target id / param
 3. Flash it. The hub and peers discover it automatically; a new card appears on
    the dashboard.
 
-## Wiring Real Sensors
+## Real Sensors vs. Simulation
 
-`readAthleteMetrics()` in `src/athlete_wearable/main.cpp` is the only place that
-fabricates data. Replace the simulated fields with reads from your hardware
-(e.g. a MAX30102/HR strap for `heart_rate_bpm`, an IMU for cadence/stride/GCT, a
-GPS for distance/pace/splits). The frame format, mesh, hub, and dashboard need
-no changes.
+The wearable has two interchangeable back ends, selected at build time by
+`include/athlete_sensors.h`:
+
+- **Simulation (default)** — `pio run -e athlete1`. No sensors required; the
+  board emits realistic fake metrics so you can test the mesh and dashboard on a
+  bare ESP32.
+- **Real hardware** — `pio run -e athlete1_hw`. Compiled with `-DUSE_REAL_SENSORS`,
+  it reads a **MAX30102** (heart rate), **MPU-6050** (cadence/dynamics),
+  **u-blox NEO-M8N/6M** GPS (distance/pace/splits), and the battery ADC. The
+  `lib_deps` are fetched automatically by PlatformIO.
+
+The frame format, mesh, hub, and dashboard are identical in both modes. See
+[`HARDWARE.md`](HARDWARE.md) for the full parts list, prices, wiring tables, and
+pin-override flags, and which metrics are measured vs. estimated.
 
 ## Troubleshooting
 

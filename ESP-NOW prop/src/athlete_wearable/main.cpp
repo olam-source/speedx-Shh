@@ -4,6 +4,7 @@
 #include "espnow_config.h"
 #include "espnow_utils.h"
 #include "peer_manager.h"
+#include "athlete_sensors.h"
 
 #ifndef ATHLETE_NODE_ID
 #define ATHLETE_NODE_ID 11
@@ -21,20 +22,18 @@ struct GossipRecord {
 };
 
 PeerManager peer_manager;
+AthleteSensors sensors;          // simulated, or real hardware with -DUSE_REAL_SENSORS
 GossipRecord gossip_cache[GOSSIP_CACHE_SIZE] = {};
 uint8_t cache_index = 0;
 uint8_t sequence_number = 0;
 uint16_t sample_id = 0;
-uint16_t best_split_sec = 0xFFFF;
 uint32_t last_metric_time = 0;
 uint32_t last_gossip_time = 0;
 uint32_t last_discovery_time = 0;
 uint32_t last_peer_check = 0;
 
 // Session state, driven by coach commands relayed through the mesh.
-uint32_t session_start_ms = 0;   // distance/splits are measured from here
 bool session_paused = false;     // STOP_SESSION halts metric sampling
-bool force_split_marker = false; // MARK_LAP flags the next sample
 
 bool isCached(const ESPNowMessage& msg) {
     for (uint8_t i = 0; i < GOSSIP_CACHE_SIZE; i++) {
@@ -59,46 +58,15 @@ void onDataSent(const uint8_t* mac_addr, esp_now_send_status_t status) {
 }
 
 AthleteMetricsPayload readAthleteMetrics() {
-    uint32_t now = millis();
-    uint32_t session_ms = now - session_start_ms;
-    uint16_t distance_m = static_cast<uint16_t>((session_ms / 1000UL) * 4UL);
-    uint16_t current_split = static_cast<uint16_t>(360 + random(-18, 19));
-    if (current_split < best_split_sec) {
-        best_split_sec = current_split;
-    }
-
     AthleteMetricsPayload metrics{};
     metrics.athlete_id = ATHLETE_NODE_ID;
     metrics.team_id = ATHLETE_TEAM_ID;
     metrics.sample_id = sample_id++;
-    metrics.uptime_ms = now;
-    metrics.heart_rate_bpm = static_cast<uint16_t>(152 + random(-8, 9));
-    metrics.pace_sec_per_mile = static_cast<uint16_t>(current_split + random(-5, 6));
-    metrics.current_split_sec = current_split;
-    metrics.best_split_sec = best_split_sec;
-    metrics.distance_m = distance_m;
-    metrics.speed_cm_s = static_cast<uint16_t>(430 + random(-25, 26));
-    metrics.cadence_spm = static_cast<uint16_t>(176 + random(-6, 7));
-    metrics.stride_length_cm = static_cast<uint16_t>(145 + random(-8, 9));
-    metrics.ground_contact_ms = static_cast<uint16_t>(215 + random(-12, 13));
-    metrics.vertical_oscillation_cm = static_cast<uint16_t>(8 + random(0, 4));
-    metrics.elevation_gain_m = static_cast<int16_t>(random(-2, 5));
-    metrics.skin_temp_c_x10 = static_cast<int16_t>(335 + random(-8, 9));
-    metrics.battery_mv = static_cast<uint16_t>(3900 - min<uint32_t>(now / 60000UL, 500UL));
-    metrics.signal_percent = 0;
-    metrics.flags = ATHLETE_FLAG_GPS_LOCK | ATHLETE_FLAG_HEART_RATE_VALID;
+    metrics.uptime_ms = millis();
 
-    if (distance_m > 0 && distance_m % 1609 < 8) {
-        metrics.flags |= ATHLETE_FLAG_SPLIT_MARKER;
-    }
-    if (force_split_marker) {
-        metrics.flags |= ATHLETE_FLAG_SPLIT_MARKER;
-        force_split_marker = false;
-    }
-    if (metrics.battery_mv < 3600) {
-        metrics.flags |= ATHLETE_FLAG_LOW_BATTERY;
-    }
-
+    // The sensor layer fills HR, pace, splits, distance, cadence, battery, etc.
+    // (real hardware with -DUSE_REAL_SENSORS, otherwise simulated values).
+    sensors.fillMetrics(metrics);
     return metrics;
 }
 
@@ -197,9 +165,8 @@ void handleCoachCommand(const ESPNowMessage& msg) {
     if (for_me) {
         switch (static_cast<CoachCommand>(cmd.command)) {
             case CoachCommand::START_SESSION:
-                session_start_ms = millis();
+                sensors.onSessionStart();
                 session_paused = false;
-                best_split_sec = 0xFFFF;
                 Serial.println("Coach: START session");
                 break;
             case CoachCommand::STOP_SESSION:
@@ -207,11 +174,11 @@ void handleCoachCommand(const ESPNowMessage& msg) {
                 Serial.println("Coach: STOP session");
                 break;
             case CoachCommand::MARK_LAP:
-                force_split_marker = true;
+                sensors.markLap();
                 Serial.printf("Coach: MARK lap %u\n", cmd.param);
                 break;
             case CoachCommand::RESET_BEST:
-                best_split_sec = 0xFFFF;
+                sensors.resetBest();
                 Serial.println("Coach: RESET best split");
                 break;
             case CoachCommand::IDENTIFY:
@@ -308,12 +275,19 @@ void setup() {
 
     setupWiFi();
     setupESPNow();
+
+    if (!sensors.begin()) {
+        Serial.println("Sensor init incomplete - continuing with available data");
+    }
+
     sendDiscoveryPing();
     last_discovery_time = millis();
 }
 
 void loop() {
     uint32_t now = millis();
+
+    sensors.update();   // keep streaming sensors (HR beats, GPS bytes, IMU) fresh
 
     if (!session_paused && now - last_metric_time >= ATHLETE_METRIC_INTERVAL_MS) {
         sendOwnMetrics();
@@ -331,5 +305,5 @@ void loop() {
         last_peer_check = now;
     }
 
-    delay(25);
+    delay(5);   // tight loop keeps HR beat-detection and GPS UART reads responsive
 }
