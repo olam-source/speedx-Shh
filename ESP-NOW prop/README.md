@@ -1,174 +1,237 @@
-# ESP-NOW Network for ESP32
+# SpeedX — Router-Free Athlete Tracking Mesh
 
-A complete PlatformIO/Arduino ESP-NOW framework for ESP32 nodes. The project includes a sender, receiver, and mesh relay example that share one packet format, dynamic peer discovery, ACK/PONG replies, peer timeout tracking, and safe payload sizing for ESP-NOW's 250-byte frame limit.
+SpeedX turns a pile of ESP32 boards into a self-healing **ESP-NOW mesh of
+athlete wearables**. Each wearable tracks heart rate and track stats (mile pace,
+splits, distance, cadence, stride, ground-contact time, and more) and gossips
+those readings node-to-node across the team. There is **no central router** —
+frames hop between athletes until they reach a single **coach hub** (a USB
+ESP-NOW adapter) plugged into the coach's laptop, where every athlete's vitals
+appear on one live screen.
+
+```
+   (Athlete 11) <-> (Athlete 12) <-> (Athlete 13) <-> ...any number
+         \             |               /
+          \         gossip            /   (relayed hop-by-hop,
+           \          |              /      no Wi-Fi router)
+                  [ Coach Hub ] --USB--> Coach laptop --> Web dashboard
+                  (mesh sink)                             (one screen)
+```
+
+The mesh is built on a reusable ESP-NOW framework (one packet format, dynamic
+peer discovery, ACK/PONG, TTL/hop forwarding, duplicate suppression, safe
+payload sizing for ESP-NOW's 250-byte frame limit).
 
 ## Project Structure
 
 ```
 ESP-NOW prop/
 ├── include/
-│   ├── espnow_config.h        # Message types, packet format, constants
-│   ├── espnow_utils.h         # WiFi, ESP-NOW, payload, and send helpers
+│   ├── espnow_config.h        # Message types, packet + payload formats, constants
+│   ├── espnow_utils.h         # WiFi, ESP-NOW, payload, send, and print helpers
 │   └── peer_manager.h         # Dynamic peer registry and timeout tracking
 ├── src/
-│   ├── node_sender/main.cpp   # Node 1: discovers Node 2 and sends sensor data
-│   ├── node_receiver/main.cpp # Node 2: receives data and replies with ACK/PONG
-│   └── node_mesh/main.cpp     # Node 3: beacons, tracks peers, forwards traffic
+│   ├── athlete_wearable/      # Body-worn node: reads metrics, gossips them to the hub
+│   ├── coach_hub/             # Central USB adapter: mesh sink + dashboard bridge
+│   ├── node_sender/           # Generic demo node (optional)
+│   ├── node_receiver/         # Generic demo node (optional)
+│   └── node_mesh/             # Generic mesh relay demo (optional)
+├── dashboard/
+│   ├── coach_dashboard.html   # One-screen live dashboard (Web Serial, no install)
+│   └── README.md
 ├── platformio.ini
 └── README.md
 ```
 
-## What Is Finished
+## How the mesh works
 
-- Packet size is capped at one ESP-NOW frame.
-- Messages are sent with variable length instead of always sending a padded struct.
-- Broadcast peer setup is automatic.
-- Nodes add peers dynamically from inbound packets before replying.
-- Sender discovery no longer requires a hard-coded receiver MAC.
-- Receiver validates payload sizes and acknowledges DATA/MESH_DATA.
-- Mesh node sends beacons, suppresses duplicates, and forwards messages with TTL/hop tracking.
-- PlatformIO environments build one node entry point at a time.
+1. **Wearables sample metrics** every 2 s into a compact `AthleteMetricsPayload`.
+2. Each sample is sent as an `ATHLETE_METRICS` frame addressed to the coach hub,
+   flagged for **gossip**.
+3. **Gossip forwarding**: if a node knows a direct route to the hub it unicasts;
+   otherwise it fans the frame out to a few random peers (`GOSSIP_FANOUT`) or
+   broadcasts. Every node keeps a small cache to drop duplicates and a TTL/hop
+   count to kill loops, so a frame ripples across the team until it reaches the
+   hub — no access point required.
+4. The **coach hub** (`COACH_HUB_NODE_ID = 250`) beacons so nearby wearables can
+   discover it and unicast directly, records the latest sample per athlete,
+   acknowledges frames, and streams everything to USB as line-delimited JSON.
+5. The **dashboard** reads that USB stream in the browser and renders a live card
+   per athlete. Coach buttons send `COACH_COMMAND` frames back down the same
+   mesh (start/stop session, mark lap, reset best split).
+
+Add athletes by flashing more wearables with unique IDs; the mesh discovers them
+automatically. Range scales with the team because every athlete is also a relay.
 
 ## Node Roles
 
-### Node 1: Sender
+### Athlete Wearable (`athlete_wearable`)
 
-- Broadcasts discovery PING frames for Node 2.
-- Learns Node 2's MAC from PONG/ACK replies.
-- Sends `SensorDataPayload` to Node 2 every 5 seconds.
-- Uses unicast after discovery and broadcast while the target is unknown.
-- Prints peer status every 5 seconds.
+- Samples heart rate + running dynamics every `ATHLETE_METRIC_INTERVAL_MS` (2 s).
+  The sample function is the single place to wire in real sensors (HR strap,
+  IMU, GPS) — it currently produces realistic simulated data.
+- Gossips its own metrics toward the coach hub and **relays** other athletes'
+  frames, so coverage grows with the squad.
+- Tracks its own best split and session distance.
+- Obeys coach commands relayed through the mesh (start/stop/lap/reset/identify)
+  and re-floods them so the whole team stays in sync.
 
-### Node 2: Receiver
+### Coach Hub (`coach_hub`)
 
-- Listens for PING, DATA, MESH_DATA, ACK, and beacon frames.
-- Dynamically registers the sender or mesh peer.
-- Responds to PING with PONG.
-- Validates sensor payloads and replies to DATA/MESH_DATA with ACK.
-- Ignores messages addressed to other node IDs.
+- The **central USB ESP-NOW adapter** — the mesh sink. Plug it into the coach's
+  computer; no router, no Wi-Fi join.
+- Maintains a roster of every athlete's latest metrics.
+- Emits one JSON line per metric for the dashboard, plus periodic hub-status
+  lines (uptime, mesh peers, active athletes).
+- Accepts coach commands typed on the USB console **or** pushed by the dashboard
+  and broadcasts them to the team.
 
-### Node 3: Mesh
+### Generic demo nodes (optional)
 
-- Broadcasts mesh beacons every 10 seconds.
-- Registers peers seen through any valid message.
-- Handles messages addressed to Node 3 locally.
-- Forwards messages for other node IDs to a known destination MAC or by broadcast.
-- Uses TTL, hop count, and a small duplicate cache to reduce loops.
+`node_sender`, `node_receiver`, and `node_mesh` are the original framework
+examples (PING/PONG discovery, sensor DATA + ACK, and a TTL mesh relay). They
+share the same headers and are handy for bring-up and protocol testing.
 
 ## Message Protocol
 
-`ESPNowMessage` is a packed 250-byte maximum frame:
+`ESPNowMessage` is a packed frame capped at one ESP-NOW v1 packet (250 bytes):
 
 ```cpp
 struct ESPNowMessage {
-    MessageType type;
+    MessageType type;      // PING/PONG/DATA/ACK/MESH_*/ATHLETE_*/COACH_COMMAND
     uint8_t sender_id;
-    uint8_t receiver_id;
+    uint8_t receiver_id;   // COACH_HUB_NODE_ID (250) or ESPNOW_BROADCAST_ID (255)
     uint8_t sequence;
     uint32_t timestamp;
     uint8_t rssi;
-    uint16_t data_length;
-    uint8_t ttl;
+    uint16_t data_length;  // actual payload bytes sent (variable length)
+    uint8_t ttl;           // hop budget for gossip/forwarding
     uint8_t hop_count;
-    uint8_t flags;
+    uint8_t flags;         // ACK_REQUESTED / FORWARDED / GOSSIP / URGENT
     uint8_t payload[MAX_PAYLOAD_SIZE];
 };
 ```
 
-Important constants:
+Athlete telemetry payload:
 
 ```cpp
-constexpr uint8_t ESPNOW_CHANNEL = 1;
-constexpr uint8_t ESPNOW_BROADCAST_ID = 0xFF;
-constexpr uint8_t ESPNOW_DEFAULT_TTL = 4;
-constexpr size_t ESPNOW_MAX_FRAME_SIZE = 250;
-constexpr size_t MAX_PAYLOAD_SIZE = 236;
-```
-
-Sensor data uses a typed payload:
-
-```cpp
-struct SensorDataPayload {
-    float temperature_c;
-    uint16_t humidity_percent;
+struct AthleteMetricsPayload {
+    uint8_t  athlete_id, team_id;
+    uint16_t sample_id;
+    uint32_t uptime_ms;
+    uint16_t heart_rate_bpm;
+    uint16_t pace_sec_per_mile, current_split_sec, best_split_sec;
+    uint16_t distance_m, speed_cm_s, cadence_spm, stride_length_cm;
+    uint16_t ground_contact_ms, vertical_oscillation_cm;
+    int16_t  elevation_gain_m, skin_temp_c_x10;
     uint16_t battery_mv;
+    int8_t   signal_percent;
+    uint8_t  reserved;
+    uint16_t flags;        // GPS_LOCK / HEART_RATE_VALID / SPLIT_MARKER / LOW_BATTERY
 };
 ```
 
-## Build Environments
+Coach command payload:
 
-The PlatformIO file exposes one environment per node:
-
-```ini
-[env:esp32_node1]  # sender
-[env:esp32_node2]  # receiver
-[env:esp32_mesh]   # mesh relay
+```cpp
+struct CoachCommandPayload {
+    uint8_t  command;        // CoachCommand: START/STOP/MARK_LAP/RESET_BEST/IDENTIFY
+    uint8_t  target_athlete; // athlete_id, or COACH_TARGET_ALL (0xFF)
+    uint16_t param;
+    uint32_t issued_ms;
+};
 ```
 
-Build them from the project directory:
+Key constants (`espnow_config.h`):
+
+```cpp
+ESPNOW_CHANNEL = 1;            COACH_HUB_NODE_ID = 250;
+ESPNOW_DEFAULT_TTL = 4;        ESPNOW_MAX_PEERS = 20;
+ATHLETE_METRIC_INTERVAL_MS = 2000;
+GOSSIP_FANOUT = 3;            GOSSIP_CACHE_SIZE = 32;
+```
+
+## Build & Flash
+
+Environments are defined in `platformio.ini`. Give each athlete board a **unique
+`ATHLETE_NODE_ID`** (set via build flags in the env) and update the
+`upload_port` / `monitor_port` for your machine.
 
 ```bash
-pio run -e esp32_node1
-pio run -e esp32_node2
-pio run -e esp32_mesh
+# Coach hub (the USB adapter on the coach's laptop)
+pio run -e coach_hub -t upload
+
+# One env per athlete board — duplicate the block to add more runners
+pio run -e athlete1 -t upload     # ATHLETE_NODE_ID=11
+pio run -e athlete2 -t upload     # ATHLETE_NODE_ID=12
+pio run -e athlete3 -t upload     # ATHLETE_NODE_ID=13
 ```
 
-Upload examples:
+Watch a node's serial output:
 
 ```bash
-pio run -e esp32_node1 -t upload
-pio run -e esp32_node2 -t upload
-pio run -e esp32_mesh -t upload
+pio device monitor -e athlete1
 ```
 
-Monitor serial output:
+Common ports: `/dev/cu.SLAB_USBtoUART`, `/dev/ttyUSB0`, `/dev/ttyACM0`, `COM3`.
 
-```bash
-pio device monitor -e esp32_node1
+## Quick Start
+
+1. Flash one board with `coach_hub`; leave it plugged into the coach's laptop.
+2. Flash each athlete board with `athlete1`, `athlete2`, … (unique IDs).
+3. Power on the wearables — they self-discover and start gossiping.
+4. Open `dashboard/coach_dashboard.html` in Chrome/Edge, click **Connect Hub**,
+   and pick the hub's serial port. Athlete cards stream in live.
+   *(Close any other serial monitor first — the port allows one reader.)*
+
+See [`dashboard/README.md`](dashboard/README.md) for the dashboard details and
+the JSON line format if you want to log or chart the data elsewhere.
+
+## Coach Commands
+
+From the dashboard buttons, or typed into the hub's USB serial console:
+
+```
+start            # zero distance/splits, begin a fresh session for everyone
+stop             # pause metric sampling
+lap [number]     # force a split marker on the next sample
+reset            # clear each athlete's best split
+identify [id]    # ask a wearable (or all) to announce itself
+cmd <n> <t> <p>  # raw form: command number / target id / param
 ```
 
-Update the `monitor_port` and `upload_port` entries in `platformio.ini` for your machine. Common port names are `/dev/cu.SLAB_USBtoUART`, `/dev/ttyUSB0`, `/dev/ttyACM0`, and `COM3`.
+## Adding an Athlete
 
-## Startup Flow
+1. Pick a unique `ATHLETE_NODE_ID` (any value except 250 and 255).
+2. Copy an `[env:athleteN]` block in `platformio.ini`, bump the ID, and set the
+   board's ports.
+3. Flash it. The hub and peers discover it automatically; a new card appears on
+   the dashboard.
 
-1. Flash Node 2 with `esp32_node2`.
-2. Flash Node 1 with `esp32_node1`.
-3. Node 1 broadcasts a PING addressed to Node 2.
-4. Node 2 registers Node 1 and replies with PONG.
-5. Node 1 sends future sensor packets to Node 2 by unicast.
-6. Optional mesh nodes can be flashed with `esp32_mesh`; they beacon and forward traffic for other IDs.
+## Wiring Real Sensors
 
-All nodes print their MAC address on boot:
-
-```text
-Device MAC: 34:85:18:12:34:56
-```
-
-The MAC is useful for diagnostics, but the sender/receiver path does not require copying it into source code.
-
-## Extending The Network
-
-To add another node:
-
-1. Pick a unique `NODE_ID`.
-2. Add a PlatformIO environment with a source filter for the new node directory.
-3. Use `ESPNowUtils::createDataMessage()` or `createMeshDataMessage()` for payloads.
-4. Call `ESPNowUtils::parseMessage()` in receive callbacks.
-5. Register inbound peers with `PeerManager::registerPeer()` and `updatePeerActivity()`.
+`readAthleteMetrics()` in `src/athlete_wearable/main.cpp` is the only place that
+fabricates data. Replace the simulated fields with reads from your hardware
+(e.g. a MAX30102/HR strap for `heart_rate_bpm`, an IMU for cadence/stride/GCT, a
+GPS for distance/pace/splits). The frame format, mesh, hub, and dashboard need
+no changes.
 
 ## Troubleshooting
 
-- Confirm every node uses the same `ESPNOW_CHANNEL`.
-- Build the correct PlatformIO environment for the node role.
-- If replies fail, check that inbound peers are being printed in the serial monitor.
-- If a node is quiet, verify the board and upload ports in `platformio.ini`.
-- If mesh traffic loops, lower `ESPNOW_DEFAULT_TTL` or increase direct discovery between nodes.
+- Every node must use the same `ESPNOW_CHANNEL`.
+- Flash the correct PlatformIO env per board, and give each athlete a unique ID.
+- If the dashboard won't connect, use Chrome/Edge and close other serial
+  monitors holding the port.
+- No athletes on screen? Confirm wearables print metric lines on their own
+  serial, and that the hub prints `{"t":"athlete",...}` lines.
+- Mesh traffic looping or noisy? Lower `ESPNOW_DEFAULT_TTL` or improve direct
+  hub discovery (move the hub closer to at least one athlete).
 
 ## References
 
 - [ESP-NOW Programming Guide](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/network/esp_now.html)
 - [PlatformIO ESP32 Platform](https://docs.platformio.org/en/latest/platforms/espressif32.html)
+- [Web Serial API](https://developer.mozilla.org/en-US/docs/Web/API/Web_Serial_API)
 
 ## License
 
-This project is provided as-is for educational and development purposes.
+Provided as-is for educational and development purposes.

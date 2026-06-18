@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SpeedX — Coach Dashboard</title>
+<style>
+  :root {
+    --bg: #0c1018; --panel: #161c28; --panel2: #1d2533; --line: #2a3445;
+    --text: #e8edf5; --muted: #8a98ad; --accent: #36d399; --warn: #fbbd23;
+    --bad: #f87272; --info: #3abff8;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  header {
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    padding: 14px 20px; background: var(--panel); border-bottom: 1px solid var(--line);
+    position: sticky; top: 0; z-index: 5;
+  }
+  header h1 { font-size: 18px; margin: 0; letter-spacing: 1px; }
+  header h1 span { color: var(--accent); }
+  .status { font-size: 13px; color: var(--muted); display: flex; gap: 18px; flex-wrap: wrap; }
+  .status b { color: var(--text); font-variant-numeric: tabular-nums; }
+  .spacer { flex: 1; }
+  button {
+    background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+    border-radius: 8px; padding: 8px 14px; font-size: 13px; cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); color: #05140d; border-color: var(--accent); font-weight: 600; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .controls { display: flex; gap: 8px; flex-wrap: wrap; }
+
+  main { padding: 20px; }
+  .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+  .empty { color: var(--muted); text-align: center; padding: 60px 20px; }
+
+  .card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+    padding: 16px; transition: opacity .3s, border-color .3s;
+  }
+  .card.stale { opacity: .4; }
+  .card-top { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 12px; }
+  .name { font-size: 17px; font-weight: 700; }
+  .team { font-size: 12px; color: var(--muted); }
+  .badges { display: flex; gap: 6px; }
+  .badge { font-size: 10px; padding: 2px 7px; border-radius: 20px; background: var(--panel2); color: var(--muted); }
+  .badge.on { background: rgba(54,211,153,.15); color: var(--accent); }
+  .badge.warn { background: rgba(251,189,35,.15); color: var(--warn); }
+  .badge.bad { background: rgba(248,114,114,.18); color: var(--bad); }
+
+  .hr { display: flex; align-items: baseline; gap: 8px; margin-bottom: 14px; }
+  .hr .val { font-size: 44px; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1; }
+  .hr .unit { font-size: 13px; color: var(--muted); }
+  .hr .zone { margin-left: auto; font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 8px; }
+
+  .metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; }
+  .metric { display: flex; flex-direction: column; }
+  .metric .k { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; }
+  .metric .v { font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+  .foot { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line);
+          display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); }
+
+  .batt { height: 6px; border-radius: 4px; background: var(--panel2); overflow: hidden; margin-top: 4px; }
+  .batt > span { display: block; height: 100%; background: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>SPEED<span>X</span> · Coach</h1>
+  <div class="status">
+    <div>Link: <b id="linkState">disconnected</b></div>
+    <div>Athletes: <b id="athleteCount">0</b></div>
+    <div>Mesh peers: <b id="peerCount">0</b></div>
+    <div>Hub uptime: <b id="hubUptime">—</b></div>
+  </div>
+  <div class="spacer"></div>
+  <div class="controls">
+    <button id="startBtn" disabled>▶ Start</button>
+    <button id="lapBtn" disabled>⚑ Mark Lap</button>
+    <button id="stopBtn" disabled>⏸ Stop</button>
+    <button id="resetBtn" disabled>↺ Reset Best</button>
+    <button id="connectBtn" class="primary">Connect Hub</button>
+  </div>
+</header>
+
+<main>
+  <div id="empty" class="empty">
+    Plug the SpeedX coach hub into USB, then press <b>Connect Hub</b> and pick its serial port.<br/>
+    (Requires Chrome or Edge — uses the Web Serial API.)
+  </div>
+  <div id="grid" class="grid"></div>
+</main>
+
+<script>
+const STALE_MS = 12000;
+const athletes = new Map();   // id -> latest record
+let port = null, writer = null, keepReading = false;
+
+const $ = (id) => document.getElementById(id);
+
+// ---- helpers ----------------------------------------------------------------
+function fmtPace(sec) {
+  if (!sec || sec > 3600) return "—";
+  const m = Math.floor(sec / 60), s = sec % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+function fmtClock(sec) {
+  if (!sec || sec >= 0xffff) return "—";
+  return fmtPace(sec);
+}
+function battPct(mv) {
+  const p = Math.round(((mv - 3300) / (4200 - 3300)) * 100);
+  return Math.max(0, Math.min(100, p));
+}
+function hrZone(hr) {
+  if (!hr) return { label: "—", color: "var(--muted)" };
+  if (hr < 100) return { label: "Z1 easy", color: "var(--info)" };
+  if (hr < 140) return { label: "Z2 aerobic", color: "var(--accent)" };
+  if (hr < 160) return { label: "Z3 tempo", color: "#a3e635" };
+  if (hr < 175) return { label: "Z4 threshold", color: "var(--warn)" };
+  return { label: "Z5 max", color: "var(--bad)" };
+}
+
+// ---- rendering --------------------------------------------------------------
+function render() {
+  const grid = $("grid");
+  const now = Date.now();
+  const ids = [...athletes.keys()].sort((a, b) => a - b);
+  $("empty").style.display = ids.length ? "none" : "block";
+
+  let live = 0;
+  for (const id of ids) {
+    const a = athletes.get(id);
+    const age = now - a._rx;
+    const stale = age > STALE_MS;
+    if (!stale) live++;
+    const zone = hrZone(a.hr);
+    const bp = battPct(a.batt_mv);
+    const f = a.flags || 0;
+
+    let card = document.getElementById("card-" + id);
+    if (!card) {
+      card = document.createElement("div");
+      card.id = "card-" + id;
+      card.className = "card";
+      grid.appendChild(card);
+    }
+    card.classList.toggle("stale", stale);
+    card.innerHTML = `
+      <div class="card-top">
+        <div>
+          <div class="name">Athlete ${id}</div>
+          <div class="team">Team ${a.team ?? "—"} · ${a.hops}-hop${a.hops === 1 ? "" : "s"} to hub</div>
+        </div>
+        <div class="badges">
+          ${(f & 1) ? '<span class="badge on">GPS</span>' : '<span class="badge">no gps</span>'}
+          ${(f & 4) ? '<span class="badge warn">LAP</span>' : ''}
+          ${(f & 8) ? '<span class="badge bad">LOW BATT</span>' : ''}
+        </div>
+      </div>
+      <div class="hr">
+        <div class="val" style="color:${zone.color}">${a.hr || "—"}</div>
+        <div class="unit">bpm</div>
+        <div class="zone" style="background:${zone.color}22;color:${zone.color}">${zone.label}</div>
+      </div>
+      <div class="metrics">
+        <div class="metric"><span class="k">Pace /mi</span><span class="v">${fmtPace(a.pace_s)}</span></div>
+        <div class="metric"><span class="k">Current split</span><span class="v">${fmtClock(a.split_s)}</span></div>
+        <div class="metric"><span class="k">Best split</span><span class="v">${fmtClock(a.best_split_s)}</span></div>
+        <div class="metric"><span class="k">Distance</span><span class="v">${(a.dist_m/1000).toFixed(2)} km</span></div>
+        <div class="metric"><span class="k">Cadence</span><span class="v">${a.cadence || "—"} spm</span></div>
+        <div class="metric"><span class="k">Stride</span><span class="v">${a.stride_cm ? (a.stride_cm/100).toFixed(2)+" m" : "—"}</span></div>
+        <div class="metric"><span class="k">Ground contact</span><span class="v">${a.gct_ms || "—"} ms</span></div>
+        <div class="metric"><span class="k">Speed</span><span class="v">${a.speed_cms ? (a.speed_cms*0.036).toFixed(1)+" km/h" : "—"}</span></div>
+        <div class="metric"><span class="k">Skin temp</span><span class="v">${a.skin_c10 ? (a.skin_c10/10).toFixed(1)+"°C" : "—"}</span></div>
+        <div class="metric"><span class="k">Link</span><span class="v">${a.signal ?? "—"}%</span></div>
+      </div>
+      <div class="foot">
+        <span>Battery ${bp}%<div class="batt"><span style="width:${bp}%;background:${bp<20?'var(--bad)':bp<40?'var(--warn)':'var(--accent)'}"></span></div></span>
+        <span>updated ${(age/1000).toFixed(0)}s ago · #${a.sample}</span>
+      </div>`;
+  }
+
+  // drop athletes that vanished from the map (rare)
+  for (const el of [...grid.children]) {
+    const id = Number(el.id.replace("card-", ""));
+    if (!athletes.has(id)) el.remove();
+  }
+  $("athleteCount").textContent = live;
+}
+
+// ---- serial ingest ----------------------------------------------------------
+function handleLine(line) {
+  line = line.trim();
+  if (!line.startsWith("{")) return;        // ignore human-readable banner lines
+  let msg;
+  try { msg = JSON.parse(line); } catch { return; }
+
+  if (msg.t === "athlete") {
+    msg._rx = Date.now();
+    athletes.set(msg.id, msg);
+    render();
+  } else if (msg.t === "hub") {
+    $("peerCount").textContent = msg.peers ?? 0;
+    const s = Math.floor((msg.uptime_ms || 0) / 1000);
+    $("hubUptime").textContent = `${Math.floor(s/60)}m ${s%60}s`;
+  } else if (msg.t === "boot" || msg.t === "ready") {
+    $("linkState").textContent = "hub online";
+  }
+}
+
+async function readLoop() {
+  const decoder = new TextDecoderStream();
+  const readableClosed = port.readable.pipeTo(decoder.writable).catch(() => {});
+  const reader = decoder.readable.getReader();
+  let buffer = "";
+  keepReading = true;
+  try {
+    while (keepReading) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += value;
+      let nl;
+      while ((nl = buffer.indexOf("\n")) >= 0) {
+        handleLine(buffer.slice(0, nl));
+        buffer = buffer.slice(nl + 1);
+      }
+    }
+  } catch (e) {
+    console.warn("read error", e);
+  } finally {
+    reader.releaseLock();
+    await readableClosed;
+  }
+}
+
+async function sendCommand(text) {
+  if (!writer) return;
+  await writer.write(new TextEncoder().encode(text + "\n"));
+}
+
+async function connect() {
+  if (!("serial" in navigator)) {
+    alert("Web Serial is not supported. Use Chrome or Edge over https or file://.");
+    return;
+  }
+  try {
+    port = await navigator.serial.requestPort();
+    await port.open({ baudRate: 115200 });
+    writer = port.writable.getWriter();
+    $("linkState").textContent = "connected";
+    setControls(true);
+    $("connectBtn").textContent = "Disconnect";
+    readLoop();
+  } catch (e) {
+    console.warn(e);
+  }
+}
+
+async function disconnect() {
+  keepReading = false;
+  setControls(false);
+  $("linkState").textContent = "disconnected";
+  $("connectBtn").textContent = "Connect Hub";
+  try {
+    if (writer) { writer.releaseLock(); writer = null; }
+    if (port) { await port.close(); port = null; }
+  } catch {}
+}
+
+function setControls(on) {
+  for (const id of ["startBtn", "stopBtn", "lapBtn", "resetBtn"]) $(id).disabled = !on;
+}
+
+// ---- wiring -----------------------------------------------------------------
+$("connectBtn").onclick = () => (port ? disconnect() : connect());
+$("startBtn").onclick = () => sendCommand("start");
+$("stopBtn").onclick  = () => sendCommand("stop");
+$("lapBtn").onclick   = () => sendCommand("lap");
+$("resetBtn").onclick = () => sendCommand("reset");
+
+// prune stale cards / refresh "updated Ns ago" once a second
+setInterval(render, 1000);
+</script>
+</body>
+</html>

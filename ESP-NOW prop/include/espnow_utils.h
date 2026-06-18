@@ -181,6 +181,9 @@ public:
             case MessageType::ERROR: return "ERROR";
             case MessageType::MESH_BEACON: return "MESH_BEACON";
             case MessageType::MESH_DATA: return "MESH_DATA";
+            case MessageType::ATHLETE_METRICS: return "ATHLETE_METRICS";
+            case MessageType::ATHLETE_EVENT: return "ATHLETE_EVENT";
+            case MessageType::COACH_COMMAND: return "COACH_COMMAND";
             default: return "UNKNOWN";
         }
     }
@@ -232,11 +235,92 @@ public:
         return msg;
     }
 
+    static ESPNowMessage createAthleteMetricsMessage(uint8_t athlete_node_id, uint8_t sequence, const AthleteMetricsPayload& metrics) {
+        ESPNowMessage msg = createMessage(MessageType::ATHLETE_METRICS, athlete_node_id, COACH_HUB_NODE_ID, sequence);
+        msg.flags = ESPNOW_FLAG_ACK_REQUESTED | ESPNOW_FLAG_GOSSIP;
+        msg.ttl = ESPNOW_DEFAULT_TTL;
+        setPayload(msg, &metrics, sizeof(metrics));
+        return msg;
+    }
+
+    static ESPNowMessage createCoachCommandMessage(uint8_t sequence, CoachCommand command, uint8_t target_athlete, uint16_t param) {
+        CoachCommandPayload payload{};
+        payload.command = static_cast<uint8_t>(command);
+        payload.target_athlete = target_athlete;
+        payload.param = param;
+        payload.issued_ms = millis();
+
+        ESPNowMessage msg = createMessage(MessageType::COACH_COMMAND, COACH_HUB_NODE_ID, ESPNOW_BROADCAST_ID, sequence);
+        msg.flags = ESPNOW_FLAG_GOSSIP | ESPNOW_FLAG_URGENT;
+        msg.ttl = ESPNOW_DEFAULT_TTL;
+        setPayload(msg, &payload, sizeof(payload));
+        return msg;
+    }
+
+    static bool readCoachCommand(const ESPNowMessage& msg, CoachCommandPayload& command) {
+        if (msg.type != MessageType::COACH_COMMAND || msg.data_length != sizeof(CoachCommandPayload)) {
+            return false;
+        }
+
+        memcpy(&command, msg.payload, sizeof(command));
+        return true;
+    }
+
     static ESPNowMessage createBeaconMessage(uint8_t sender_id, uint8_t sequence, uint8_t active_peer_count) {
         uint8_t payload[2] = {1, active_peer_count};
         ESPNowMessage msg = createMessage(MessageType::MESH_BEACON, sender_id, ESPNOW_BROADCAST_ID, sequence);
         setPayload(msg, payload, sizeof(payload));
         return msg;
+    }
+
+    static bool readAthleteMetrics(const ESPNowMessage& msg, AthleteMetricsPayload& metrics) {
+        if (msg.type != MessageType::ATHLETE_METRICS || msg.data_length != sizeof(AthleteMetricsPayload)) {
+            return false;
+        }
+
+        memcpy(&metrics, msg.payload, sizeof(metrics));
+        return true;
+    }
+
+    static void printAthleteMetricsCsv(const AthleteMetricsPayload& metrics) {
+        Serial.printf("ATHLETE,%u,%u,%u,%lu,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%d,%d,%u,%d,%u\n",
+                      metrics.athlete_id,
+                      metrics.team_id,
+                      metrics.sample_id,
+                      static_cast<unsigned long>(metrics.uptime_ms),
+                      metrics.heart_rate_bpm,
+                      metrics.pace_sec_per_mile,
+                      metrics.current_split_sec,
+                      metrics.best_split_sec,
+                      metrics.distance_m,
+                      metrics.speed_cm_s,
+                      metrics.cadence_spm,
+                      metrics.stride_length_cm,
+                      metrics.ground_contact_ms,
+                      metrics.vertical_oscillation_cm,
+                      metrics.elevation_gain_m,
+                      metrics.skin_temp_c_x10,
+                      metrics.battery_mv,
+                      metrics.signal_percent,
+                      metrics.flags);
+    }
+
+    // One self-describing JSON object per line, streamed over USB to the coach
+    // dashboard. Kept on a single line so the host can parse it line-by-line.
+    static void printAthleteMetricsJson(const AthleteMetricsPayload& m, uint8_t hop_count, uint8_t ttl) {
+        Serial.printf(
+            "{\"t\":\"athlete\",\"id\":%u,\"team\":%u,\"sample\":%u,\"uptime_ms\":%lu,"
+            "\"hr\":%u,\"pace_s\":%u,\"split_s\":%u,\"best_split_s\":%u,\"dist_m\":%u,"
+            "\"speed_cms\":%u,\"cadence\":%u,\"stride_cm\":%u,\"gct_ms\":%u,\"vosc_cm\":%u,"
+            "\"elev_m\":%d,\"skin_c10\":%d,\"batt_mv\":%u,\"signal\":%d,\"flags\":%u,"
+            "\"hops\":%u,\"ttl\":%u}\n",
+            m.athlete_id, m.team_id, m.sample_id,
+            static_cast<unsigned long>(m.uptime_ms),
+            m.heart_rate_bpm, m.pace_sec_per_mile, m.current_split_sec, m.best_split_sec,
+            m.distance_m, m.speed_cm_s, m.cadence_spm, m.stride_length_cm,
+            m.ground_contact_ms, m.vertical_oscillation_cm, m.elevation_gain_m,
+            m.skin_temp_c_x10, m.battery_mv, m.signal_percent, m.flags,
+            hop_count, ttl);
     }
 
     static void printMessageSummary(const ESPNowMessage& msg) {
