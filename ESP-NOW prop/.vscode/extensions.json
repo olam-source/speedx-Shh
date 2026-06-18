@@ -1,0 +1,12 @@
+{
+  "extensions": [
+    {
+      "recommendations": [
+        "platformio.platformio-ide",
+        "ms-vscode.cpptools",
+        "ms-vscode.cpptools-extension-pack",
+        "serialmonitor.serialmonitor"
+      ]
+    }
+  ]
+}

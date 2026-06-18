@@ -1,0 +1,31 @@
+# PlatformIO
+.pio/
+.pioenvs/
+.vscode/.c_cpp_properties.json
+.vscode/c_cpp_properties.json
+.DS_Store
+
+# IDE
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.swp
+*.swo
+*~
+
+# Build artifacts
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+build/
+
+# Dependencies
+lib/
+
+# Logs
+*.log

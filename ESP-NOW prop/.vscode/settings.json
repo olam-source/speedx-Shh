@@ -1,0 +1,31 @@
+{
+  "C_Cpp.default.includePath": [
+    "${workspaceFolder}/include",
+    "${workspaceFolder}/lib",
+    "${workspaceFolder}/.pio/libdeps/**/*/include",
+    "${workspaceFolder}/.pio/packages/framework-arduinoespressif32/cores/esp32",
+    "${workspaceFolder}/.pio/packages/framework-arduinoespressif32/tools/esp32-arduino-libs/esp32/include"
+  ],
+  "C_Cpp.default.defines": [
+    "ARDUINO=10810",
+    "ARDUINO_ARCH_ESP32",
+    "ARDUINO_VARIANT=esp32"
+  ],
+  "files.exclude": {
+    ".pio": true,
+    ".git": true,
+    ".DS_Store": true
+  },
+  "search.exclude": {
+    ".pio": true,
+    "build": true
+  },
+  "[cpp]": {
+    "editor.formatOnSave": true,
+    "editor.defaultFormatter": "ms-vscode.cpptools"
+  },
+  "[c]": {
+    "editor.formatOnSave": true,
+    "editor.defaultFormatter": "ms-vscode.cpptools"
+  }
+}

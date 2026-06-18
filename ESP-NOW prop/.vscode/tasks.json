@@ -1,0 +1,60 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Build Sender Node",
+      "type": "shell",
+      "command": "pio",
+      "args": ["run", "-e", "esp32_node1"],
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "Build Receiver Node",
+      "type": "shell",
+      "command": "pio",
+      "args": ["run", "-e", "esp32_node2"],
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Build Mesh Node",
+      "type": "shell",
+      "command": "pio",
+      "args": ["run", "-e", "esp32_mesh"],
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Upload & Monitor Sender",
+      "type": "shell",
+      "command": "pio",
+      "args": ["run", "-e", "esp32_node1", "-t", "upload", "--verbose"],
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Upload & Monitor Receiver",
+      "type": "shell",
+      "command": "pio",
+      "args": ["run", "-e", "esp32_node2", "-t", "upload", "--verbose"],
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Monitor Sender",
+      "type": "shell",
+      "command": "pio",
+      "args": ["device", "monitor", "-e", "esp32_node1"],
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "Clean All",
+      "type": "shell",
+      "command": "pio",
+      "args": ["run", "--target=clean"],
+      "problemMatcher": []
+    }
+  ]
+}
