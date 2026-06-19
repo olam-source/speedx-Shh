@@ -6,6 +6,7 @@
 #include <esp_now.h>
 #include <esp_wifi.h>
 #include "espnow_config.h"
+#include "espnow_crypto.h"
 
 class ESPNowUtils {
 public:
@@ -42,7 +43,12 @@ public:
             Serial.printf("Error initializing ESP-NOW: %d\n", result);
             return false;
         }
+#if ESPNOW_ENCRYPT
+        EspNowCrypto::init();
+        Serial.println("ESP-NOW initialized (AES-256-GCM payload encryption ON)");
+#else
         Serial.println("ESP-NOW initialized successfully");
+#endif
         return true;
     }
 
@@ -107,7 +113,18 @@ public:
             return false;
         }
 
-        return data_len >= static_cast<int>(ESPNOW_HEADER_SIZE + msg.data_length);
+        if (data_len < static_cast<int>(ESPNOW_HEADER_SIZE + msg.data_length)) {
+            return false;
+        }
+
+#if ESPNOW_ENCRYPT
+        // Authenticate + decrypt the payload; a forged/foreign frame is rejected.
+        if (!EspNowCrypto::decrypt(msg)) {
+            return false;
+        }
+#endif
+
+        return true;
     }
 
     static bool setPayload(ESPNowMessage& msg, const void* payload, uint16_t payload_length) {
@@ -132,6 +149,13 @@ public:
         if (msg.data_length > MAX_PAYLOAD_SIZE) {
             msg.data_length = MAX_PAYLOAD_SIZE;
         }
+
+#if ESPNOW_ENCRYPT
+        if (!EspNowCrypto::encrypt(msg)) {
+            Serial.println("Encrypt failed; frame dropped");
+            return false;
+        }
+#endif
 
         esp_err_t result = esp_now_send(peer_mac, reinterpret_cast<uint8_t*>(&msg), messageSize(msg));
         if (result != ESP_OK) {

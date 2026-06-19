@@ -6,6 +6,7 @@
 #include "espnow_utils.h"
 #include "peer_manager.h"
 #include "athlete_sensors.h"
+#include "ota_portal.h"
 
 // Build-flag values are only the *defaults*. The live athlete id/team are stored
 // in NVS and can be set over USB (`id <n>` / `team <n>`), so one identical binary
@@ -43,6 +44,10 @@ uint8_t g_team_id = ATHLETE_TEAM_ID;
 
 // Session state, driven by coach commands relayed through the mesh.
 bool session_paused = false;     // STOP_SESSION halts metric sampling
+
+// OTA update mode (SoftAP firmware upload). While active the node leaves the mesh.
+OtaPortal ota;
+bool ota_mode = false;
 
 // USB provisioning console.
 String serial_line;
@@ -296,8 +301,11 @@ void handleSerialCommand(String line) {
         prefs.remove("id");
         prefs.remove("team");
         applyAndRestart("defaults");
+    } else if (verb == "ota") {
+        ota.begin(String("SpeedX-OTA-") + g_athlete_id);
+        ota_mode = true;
     } else if (verb == "help") {
-        Serial.println("commands: id <1-249> | team <0-255> | info | reset-id | help");
+        Serial.println("commands: id <1-249> | team <0-255> | info | ota | reset-id | help");
     } else {
         Serial.printf("unknown command '%s' (try help)\n", verb.c_str());
     }
@@ -354,7 +362,7 @@ void setup() {
                   g_team_id,
                   COACH_HUB_NODE_ID,
                   ESPNOW_CHANNEL);
-    Serial.println("USB console: id <1-249> | team <0-255> | info | reset-id | help");
+    Serial.println("USB console: id <1-249> | team <0-255> | info | ota | reset-id | help");
 
     setupWiFi();
     setupESPNow();
@@ -371,6 +379,13 @@ void loop() {
     uint32_t now = millis();
 
     pollSerialConsole();   // accept id/team provisioning over USB
+
+    if (ota_mode) {        // OTA portal owns the radio; mesh is suspended until reboot
+        ota.handle();
+        delay(2);
+        return;
+    }
+
     sensors.update();      // keep streaming sensors (HR beats, GPS bytes, IMU) fresh
 
     if (!session_paused && now - last_metric_time >= ATHLETE_METRIC_INTERVAL_MS) {

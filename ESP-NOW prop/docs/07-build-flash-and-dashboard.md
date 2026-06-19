@@ -74,6 +74,25 @@ longer need them — flash `athlete1` (or `athlete1_hw`) to every board and run
 `coach_hub`: Flash ~56%, RAM ~14%. `athlete1_hw`: Flash ~60%, RAM ~14%. Plenty
 of headroom on a 4 MB ESP32.
 
+### Over-the-air firmware updates (no router)
+
+A flashed wearable can update itself wirelessly — no re-cabling. In the USB
+console (or any time at the bench) type `ota`. The node ([`ota_portal.h`](../include/ota_portal.h)):
+
+1. switches its radio into a Wi-Fi access point named `SpeedX-OTA-<id>`
+   (password `speedxota`),
+2. serves an upload page at `http://192.168.4.1/`.
+
+Join that Wi-Fi from a phone/laptop, open the page, upload a new `firmware.bin`
+(from `.pio/build/<env>/firmware.bin`), and the board flashes it and reboots.
+While the OTA portal is up the node leaves the mesh until it restarts.
+
+### Encryption passphrase
+
+Frames are AES-256-GCM encrypted by default. **Set your team's passphrase** in
+`platformio.ini` (`[env]` → `-DESPNOW_PSK_PASSPHRASE="..."`) before flashing the
+fleet — every node must share it. See [Mesh Protocol → Security](03-mesh-protocol.md#security--payload-encryption).
+
 ## Two ways for the coach to view the team
 
 | Client | Best for | Athlete names? |

@@ -98,6 +98,28 @@ multiple hops out. Supported: `START_SESSION`, `STOP_SESSION`, `MARK_LAP`,
 `RESET_BEST`, `IDENTIFY`. See how they're handled in
 [Firmware & Code Map](04-firmware-and-code-map.md).
 
+## Security — payload encryption
+
+Frames are protected with **AES-256-GCM** ([`espnow_crypto.h`](../include/espnow_crypto.h)),
+since ESP-NOW's built-in encryption is unicast-only and can't cover a broadcast
+gossip mesh. On the wire each payload becomes `[12-byte IV][ciphertext][16-byte
+tag]`:
+
+- **Confidentiality + integrity** — the payload is encrypted and authenticated;
+  a forged or foreign frame fails the GCM tag check and is dropped (which also
+  isolates the mesh from other ESP-NOW traffic).
+- **Header stays clear** — relays route and dedupe on the header without
+  decrypting. The *immutable* header fields (type, sender, receiver, sequence)
+  are bound in as authenticated AAD, so they can't be tampered with either; the
+  mutable ones (ttl, hop_count) are excluded so relays can still forward.
+- **Per-hop re-encryption** with a fresh random IV each send.
+- **Key** = SHA-256 of a shared passphrase. Set your team's secret with
+  `-DESPNOW_PSK_PASSPHRASE="..."` in `platformio.ini`; every node must match.
+  Disable entirely with `-DESPNOW_ENCRYPT=0`.
+
+Cost: 28 bytes/frame of overhead (plenty of room — our payloads are ~8–40 bytes)
+and a hardware-accelerated AES op per send/receive.
+
 ## Reliability notes
 
 - **ACKs** are best-effort: `ATHLETE_METRICS` requests an ACK so a wearable can

@@ -57,7 +57,10 @@ it's done and compiles to a flashable binary):
 | Coach desktop app + athlete roster management | ✅ Complete ([speedx-coach-app](https://github.com/olam-source/speedx-coach-app)) |
 | Coach commands end-to-end | ✅ Complete |
 | Runtime athlete-ID provisioning (one binary for all wearables) | ✅ Complete |
+| Frame encryption (AES-256-GCM) | ✅ Complete |
+| OTA firmware updates (SoftAP web upload) | ✅ Complete |
 | Coach app: session recording + CSV export, low-batt/HR-zone alerts | ✅ Complete |
+| Coach app: per-athlete history + charts, team filter, auto-update | ✅ Complete |
 | Simulated metrics | ✅ Complete, runs on bare ESP32 |
 | Real-sensor firmware | ✅ Compiles & links against vendor libs |
 | **On-hardware validation** | ⬜ Needs physical boards + sensors |
@@ -80,9 +83,9 @@ it's done and compiles to a flashable binary):
 **Longer term**
 - Custom integrated PCB (Route B2) for a rugged, scalable wearable.
 - BLE chest-strap HR option; foot-pod IMU for ground-contact time.
-- Coach app: per-athlete history/charts and configurable alert thresholds
-  (low-battery + HR-zone alerts and session CSV export already ship; packaged
-  installers are built by CI).
+- Coach app: configurable alert thresholds and persistent session history
+  across restarts (live per-athlete charts, team filter, alerts, CSV export, and
+  auto-update already ship; installers are built by CI).
 
 ## Known limitations (carry these forward honestly)
 
