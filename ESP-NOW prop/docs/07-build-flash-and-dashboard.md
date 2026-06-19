@@ -51,11 +51,23 @@ pio device monitor -e athlete1_hw
 Set `upload_port` / `monitor_port` per board in `platformio.ini`. Common names:
 `/dev/cu.SLAB_USBtoUART`, `/dev/ttyUSB0`, `COM3`.
 
-### Adding athletes
+### Adding athletes — one binary for the whole team ⭐
 
-Copy an `[env:athleteN]` (or `[env:athleteN_hw]`) block, give it a **unique
-`ATHLETE_NODE_ID`** (anything except 250 and 255), set its ports, flash. The mesh
-discovers it automatically.
+Athlete IDs are set **at runtime over USB** and stored in NVS, so you flash the
+*same* binary to every wearable and assign identities afterward — no per-athlete
+compile. After flashing, open a serial monitor (115200) and type:
+
+```
+id 12        # set this wearable's athlete id (1–249); saves + reboots
+team 1       # set its team (0–255)
+info         # print current id / team / MAC
+reset-id     # revert to the build-flag default
+```
+
+The build-flag `ATHLETE_NODE_ID` is now just the *default* if nothing is stored.
+The legacy per-athlete envs (`athlete2`, `athlete3`, …) still work, but you no
+longer need them — flash `athlete1` (or `athlete1_hw`) to every board and run
+`id N` once each. The mesh discovers new IDs automatically.
 
 ### Resource use (reference build)
 

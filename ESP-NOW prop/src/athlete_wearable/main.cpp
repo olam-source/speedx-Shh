@@ -1,11 +1,15 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <esp_now.h>
+#include <Preferences.h>
 #include "espnow_config.h"
 #include "espnow_utils.h"
 #include "peer_manager.h"
 #include "athlete_sensors.h"
 
+// Build-flag values are only the *defaults*. The live athlete id/team are stored
+// in NVS and can be set over USB (`id <n>` / `team <n>`), so one identical binary
+// flashes to every wearable — no per-athlete compile needed.
 #ifndef ATHLETE_NODE_ID
 #define ATHLETE_NODE_ID 11
 #endif
@@ -23,6 +27,7 @@ struct GossipRecord {
 
 PeerManager peer_manager;
 AthleteSensors sensors;          // simulated, or real hardware with -DUSE_REAL_SENSORS
+Preferences prefs;               // NVS store for the runtime athlete id/team
 GossipRecord gossip_cache[GOSSIP_CACHE_SIZE] = {};
 uint8_t cache_index = 0;
 uint8_t sequence_number = 0;
@@ -32,8 +37,15 @@ uint32_t last_gossip_time = 0;
 uint32_t last_discovery_time = 0;
 uint32_t last_peer_check = 0;
 
+// Live identity, loaded from NVS at boot (falls back to the build-flag defaults).
+uint8_t g_athlete_id = ATHLETE_NODE_ID;
+uint8_t g_team_id = ATHLETE_TEAM_ID;
+
 // Session state, driven by coach commands relayed through the mesh.
 bool session_paused = false;     // STOP_SESSION halts metric sampling
+
+// USB provisioning console.
+String serial_line;
 
 bool isCached(const ESPNowMessage& msg) {
     for (uint8_t i = 0; i < GOSSIP_CACHE_SIZE; i++) {
@@ -59,8 +71,8 @@ void onDataSent(const uint8_t* mac_addr, esp_now_send_status_t status) {
 
 AthleteMetricsPayload readAthleteMetrics() {
     AthleteMetricsPayload metrics{};
-    metrics.athlete_id = ATHLETE_NODE_ID;
-    metrics.team_id = ATHLETE_TEAM_ID;
+    metrics.athlete_id = g_athlete_id;
+    metrics.team_id = g_team_id;
     metrics.sample_id = sample_id++;
     metrics.uptime_ms = millis();
 
@@ -71,7 +83,7 @@ AthleteMetricsPayload readAthleteMetrics() {
 }
 
 void sendDiscoveryPing() {
-    ESPNowMessage ping = ESPNowUtils::createPingMessage(ATHLETE_NODE_ID, COACH_HUB_NODE_ID, sequence_number++);
+    ESPNowMessage ping = ESPNowUtils::createPingMessage(g_athlete_id, COACH_HUB_NODE_ID, sequence_number++);
     ping.flags |= ESPNOW_FLAG_GOSSIP;
     ESPNowUtils::broadcastMessage(ping);
     Serial.println("Discovery ping broadcast for coach hub");
@@ -114,7 +126,7 @@ bool gossipMessage(ESPNowMessage msg) {
 
 void sendOwnMetrics() {
     AthleteMetricsPayload metrics = readAthleteMetrics();
-    ESPNowMessage msg = ESPNowUtils::createAthleteMetricsMessage(ATHLETE_NODE_ID, sequence_number++, metrics);
+    ESPNowMessage msg = ESPNowUtils::createAthleteMetricsMessage(g_athlete_id, sequence_number++, metrics);
     rememberMessage(msg);
     bool queued = gossipMessage(msg);
 
@@ -144,7 +156,7 @@ void handleAthleteMetrics(const uint8_t* mac, const ESPNowMessage& msg) {
                   msg.ttl);
 
     if (msg.flags & ESPNOW_FLAG_ACK_REQUESTED) {
-        ESPNowMessage ack = ESPNowUtils::createAckMessage(ATHLETE_NODE_ID, msg.sender_id, msg.sequence);
+        ESPNowMessage ack = ESPNowUtils::createAckMessage(g_athlete_id, msg.sender_id, msg.sequence);
         ESPNowUtils::sendMessage(mac, ack);
     }
 
@@ -161,7 +173,7 @@ void handleCoachCommand(const ESPNowMessage& msg) {
         return;
     }
 
-    bool for_me = cmd.target_athlete == COACH_TARGET_ALL || cmd.target_athlete == ATHLETE_NODE_ID;
+    bool for_me = cmd.target_athlete == COACH_TARGET_ALL || cmd.target_athlete == g_athlete_id;
     if (for_me) {
         switch (static_cast<CoachCommand>(cmd.command)) {
             case CoachCommand::START_SESSION:
@@ -182,7 +194,7 @@ void handleCoachCommand(const ESPNowMessage& msg) {
                 Serial.println("Coach: RESET best split");
                 break;
             case CoachCommand::IDENTIFY:
-                Serial.printf("Coach: IDENTIFY athlete %u\n", ATHLETE_NODE_ID);
+                Serial.printf("Coach: IDENTIFY athlete %u\n", g_athlete_id);
                 break;
             default:
                 break;
@@ -198,7 +210,7 @@ void handleIncomingMessage(const uint8_t* mac, const ESPNowMessage& msg) {
     peer_manager.registerPeer(mac, msg.sender_id);
     peer_manager.updatePeerActivity(mac, static_cast<int8_t>(msg.rssi), msg.sequence);
 
-    if (msg.sender_id == ATHLETE_NODE_ID || isCached(msg)) {
+    if (msg.sender_id == g_athlete_id || isCached(msg)) {
         return;
     }
     rememberMessage(msg);
@@ -240,6 +252,71 @@ void onDataReceived(const uint8_t* mac, const uint8_t* data, int data_len) {
     handleIncomingMessage(mac, msg);
 }
 
+// ===== USB provisioning console =================================================
+// Lets you assign each wearable's identity at runtime, so one binary serves all:
+//   id <1-249>   set this athlete's node id (saved to NVS, then reboots)
+//   team <0-255> set this athlete's team
+//   info         print current id/team/MAC
+//   reset-id     clear stored id/team (revert to build-flag defaults)
+void applyAndRestart(const char* what) {
+    prefs.end();
+    Serial.printf("Saved %s. Restarting...\n", what);
+    delay(200);
+    ESP.restart();
+}
+
+void handleSerialCommand(String line) {
+    line.trim();
+    if (line.length() == 0) return;
+
+    int sp = line.indexOf(' ');
+    String verb = (sp < 0) ? line : line.substring(0, sp);
+    String arg = (sp < 0) ? String("") : line.substring(sp + 1);
+    verb.toLowerCase();
+    arg.trim();
+
+    if (verb == "id") {
+        long v = arg.toInt();
+        if (v < 1 || v > 249) { Serial.println("id must be 1-249 (250=hub, 255=broadcast are reserved)"); return; }
+        prefs.putUChar("id", static_cast<uint8_t>(v));
+        applyAndRestart("athlete id");
+    } else if (verb == "team") {
+        long v = arg.toInt();
+        if (v < 0 || v > 255) { Serial.println("team must be 0-255"); return; }
+        prefs.putUChar("team", static_cast<uint8_t>(v));
+        applyAndRestart("team");
+    } else if (verb == "info") {
+        uint8_t mac[6];
+        ESPNowUtils::getDeviceMac(mac);
+        Serial.printf("id=%u team=%u mac=%s uptime=%lus\n",
+                      g_athlete_id, g_team_id,
+                      ESPNowUtils::macToString(mac).c_str(),
+                      static_cast<unsigned long>(millis() / 1000));
+    } else if (verb == "reset-id") {
+        prefs.remove("id");
+        prefs.remove("team");
+        applyAndRestart("defaults");
+    } else if (verb == "help") {
+        Serial.println("commands: id <1-249> | team <0-255> | info | reset-id | help");
+    } else {
+        Serial.printf("unknown command '%s' (try help)\n", verb.c_str());
+    }
+}
+
+void pollSerialConsole() {
+    while (Serial.available() > 0) {
+        char c = static_cast<char>(Serial.read());
+        if (c == '\n' || c == '\r') {
+            if (serial_line.length() > 0) {
+                handleSerialCommand(serial_line);
+                serial_line = "";
+            }
+        } else if (serial_line.length() < 48) {
+            serial_line += c;
+        }
+    }
+}
+
 void setupWiFi() {
     if (!ESPNowUtils::initWiFi("Athlete_Wearable")) {
         while (true) delay(1000);
@@ -264,14 +341,20 @@ void setupESPNow() {
 void setup() {
     Serial.begin(115200);
     delay(1000);
-    randomSeed(static_cast<uint32_t>(micros()) ^ ATHLETE_NODE_ID);
+
+    // Load the runtime identity (NVS), falling back to the build-flag defaults.
+    prefs.begin("speedx", false);
+    g_athlete_id = prefs.getUChar("id", ATHLETE_NODE_ID);
+    g_team_id = prefs.getUChar("team", ATHLETE_TEAM_ID);
+    randomSeed(static_cast<uint32_t>(micros()) ^ g_athlete_id);
 
     Serial.println("\n\n=== Athlete Wearable Gossip Node ===");
     Serial.printf("Athlete Node: %u | Team: %u | Coach Hub: %u | Channel: %u\n",
-                  ATHLETE_NODE_ID,
-                  ATHLETE_TEAM_ID,
+                  g_athlete_id,
+                  g_team_id,
                   COACH_HUB_NODE_ID,
                   ESPNOW_CHANNEL);
+    Serial.println("USB console: id <1-249> | team <0-255> | info | reset-id | help");
 
     setupWiFi();
     setupESPNow();
@@ -287,7 +370,8 @@ void setup() {
 void loop() {
     uint32_t now = millis();
 
-    sensors.update();   // keep streaming sensors (HR beats, GPS bytes, IMU) fresh
+    pollSerialConsole();   // accept id/team provisioning over USB
+    sensors.update();      // keep streaming sensors (HR beats, GPS bytes, IMU) fresh
 
     if (!session_paused && now - last_metric_time >= ATHLETE_METRIC_INTERVAL_MS) {
         sendOwnMetrics();
