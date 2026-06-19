@@ -32,9 +32,10 @@ reads like a wiki on GitHub and imports cleanly into Notion
 | **What** | Wearable athlete telemetry over a self-healing ESP-NOW mesh |
 | **No** | Wi-Fi router, cell connection, or paid infrastructure |
 | **Scales to** | Any number of athletes — each wearable is also a relay |
-| **Coach view** | One browser screen, live, zero install (Web Serial) |
+| **Coach view** | Desktop app (with athlete roster) **or** a zero-install browser screen — both live |
 | **Status** | Firmware complete & compiles to flashable ESP32 binaries; runs in simulation today, real-sensor build validated against vendor libraries |
-| **Repo** | [github.com/olam-source/speedx-Shh](https://github.com/olam-source/speedx-Shh) |
+| **Firmware repo** | [github.com/olam-source/speedx-Shh](https://github.com/olam-source/speedx-Shh) |
+| **Coach app repo** | [github.com/olam-source/speedx-coach-app](https://github.com/olam-source/speedx-coach-app) (Electron desktop app + roster management) |
 
 ## 🔗 Source-of-truth files (outside this wiki)
 

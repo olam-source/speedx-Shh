@@ -62,14 +62,22 @@ builds every athlete — see [`../platformio.ini`](../platformio.ini).
 The original ESP-NOW framework demos (PING/PONG discovery, sensor DATA+ACK, TTL
 mesh relay). Useful for radio bring-up; not part of the athlete system.
 
-## Host — `dashboard/`
+## Host — coach clients
 
-### [`coach_dashboard.html`](../dashboard/coach_dashboard.html)
+Two clients read the hub's USB JSON stream; both are documented in
+[Build, Flash & Dashboard](07-build-flash-and-dashboard.md).
+
+### [`dashboard/coach_dashboard.html`](../dashboard/coach_dashboard.html)
 Self-contained page (HTML + CSS + vanilla JS). Uses the **Web Serial API** to
 read the hub's USB stream, parses each JSON line, and renders a live card per
-athlete with HR zones, splits, pace, battery, link quality, and coach-control
-buttons. No build step, no dependencies. See
-[Build, Flash & Dashboard](07-build-flash-and-dashboard.md).
+athlete. No build step, no dependencies — athletes shown by node id.
+
+### SpeedX Coach desktop app — separate repo
+[`speedx-coach-app`](https://github.com/olam-source/speedx-coach-app) is an
+**Electron** app that does everything the dashboard does **plus athlete roster
+management** (node id → name + team, persisted to disk). Same JSON stream, same
+coach commands; Chromium-bundled so it runs on macOS/Windows/Linux without the
+"open in Chrome" caveat.
 
 ## Control flow cheat-sheet
 

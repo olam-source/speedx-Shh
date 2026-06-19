@@ -62,7 +62,51 @@ discovers it automatically.
 `coach_hub`: Flash ~56%, RAM ~14%. `athlete1_hw`: Flash ~60%, RAM ~14%. Plenty
 of headroom on a 4 MB ESP32.
 
-## The coach dashboard
+## Two ways for the coach to view the team
+
+| Client | Best for | Athlete names? |
+|--------|----------|----------------|
+| **SpeedX Coach desktop app** (recommended) | Day-to-day coaching; an installable app | ✅ roster: node id → name + team, saved to disk |
+| **Browser dashboard** (`dashboard/coach_dashboard.html`) | Quick check / no install / any laptop | ❌ shows athletes by node id only |
+
+Both read the **same** USB JSON stream from the hub — pick whichever fits.
+
+## SpeedX Coach desktop app ⭐
+
+A cross-platform **Electron** app in its own repo:
+**[github.com/olam-source/speedx-coach-app](https://github.com/olam-source/speedx-coach-app)**.
+It bundles Chromium, so the USB serial reading works the same on macOS, Windows,
+and Linux — no "open it in Chrome" caveat — and it adds **athlete roster
+management**.
+
+### Run it
+
+```bash
+git clone https://github.com/olam-source/speedx-coach-app
+cd speedx-coach-app
+npm install
+npm start            # or: npm run dist  -> .dmg / .exe / .AppImage
+```
+
+Click **Connect Hub**, choose the hub's port from the in-app chooser.
+
+### Athlete management (the headline feature)
+
+- **Add / edit / remove athletes** in the sidebar, mapping a **node ID** (1–249)
+  to a **name** and **team**. Validates uniqueness and reserved ids (250/255).
+- **Persisted** to `userData/roster.json`, so the roster survives restarts.
+- **Pre-register** athletes before a session — they appear as *offline* cards
+  until their wearable reports.
+- Live node IDs not on the roster show as "Node N · Unassigned" with a one-click
+  **+ add to roster**.
+- Same coach controls (Start / Stop / Mark Lap / Reset Best) as the browser
+  dashboard.
+
+> The wearable firmware already keys everything by **node ID** (set per athlete
+> via the `ATHLETE_NODE_ID` build flag). The app's roster is the friendly-name
+> layer on top — no firmware change is needed to name or add athletes.
+
+## The browser dashboard (lightweight alternative)
 
 [`../dashboard/coach_dashboard.html`](../dashboard/coach_dashboard.html) — a
 single self-contained page. Full notes in

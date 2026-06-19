@@ -27,7 +27,7 @@ flowchart LR
     A11 <-->|gossip| A13
     A12 -->|reaches hub| HUB[Coach Hub - Node 250]
     HUB -->|USB serial, JSON lines| LAP[Coach Laptop]
-    LAP -->|Web Serial| DASH[Browser Dashboard]
+    LAP -->|Web Serial| DASH[Coach App / Dashboard]
     DASH -.->|coach commands| LAP
     LAP -.-> HUB
     HUB -.->|broadcast COACH_COMMAND| A12
@@ -58,8 +58,13 @@ sequenceDiagram
    registry, sensor abstraction. Header-only; every node links the same code.
 2. **Node firmware** (`../src/`) — each role is a thin `main.cpp` that wires the
    library together with role-specific behavior.
-3. **Host dashboard** (`../dashboard/`) — a single HTML file that reads the hub's
-   USB stream in the browser. No backend, no install.
+3. **Host client** — reads the hub's USB JSON stream and renders the team. Two
+   interchangeable options:
+   - **SpeedX Coach desktop app** (Electron, separate repo
+     [`speedx-coach-app`](https://github.com/olam-source/speedx-coach-app)) —
+     adds athlete **roster management** (node id → name + team, saved to disk).
+   - **Browser dashboard** (`../dashboard/coach_dashboard.html`) — a single HTML
+     file, no install, athletes shown by node id.
 
 ```
 include/   espnow_config.h · espnow_utils.h · peer_manager.h · athlete_sensors.h

@@ -53,7 +53,8 @@ it's done and compiles to a flashable binary):
 |------|-------|
 | Mesh protocol + gossip | ✅ Complete |
 | Coach hub + USB JSON stream | ✅ Complete |
-| Dashboard (one screen, live, controls) | ✅ Complete |
+| Browser dashboard (one screen, live, controls) | ✅ Complete |
+| Coach desktop app + athlete roster management | ✅ Complete ([speedx-coach-app](https://github.com/olam-source/speedx-coach-app)) |
 | Coach commands end-to-end | ✅ Complete |
 | Simulated metrics | ✅ Complete, runs on bare ESP32 |
 | Real-sensor firmware | ✅ Compiles & links against vendor libs |
@@ -77,7 +78,8 @@ it's done and compiles to a flashable binary):
 **Longer term**
 - Custom integrated PCB (Route B2) for a rugged, scalable wearable.
 - BLE chest-strap HR option; foot-pod IMU for ground-contact time.
-- Coach dashboard: per-athlete history, alerts (HR zone / low battery), export.
+- Coach app: per-athlete history, alerts (HR zone / low battery), session
+  recording/export, and packaged installers (`npm run dist`).
 
 ## Known limitations (carry these forward honestly)
 
