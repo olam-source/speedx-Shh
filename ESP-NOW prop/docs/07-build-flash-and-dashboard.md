@@ -25,9 +25,8 @@ Defined in [`../platformio.ini`](../platformio.ini):
 | Env | Builds | Notes |
 |-----|--------|-------|
 | `coach_hub` | the USB hub | default env |
-| `athlete1` / `athlete2` / `athlete3` | simulated wearables | unique ids 11/12/13, no sensors needed |
+| `athlete1` | simulated wearable | no sensors needed; set the real id over USB with `id <n>` |
 | `athlete1_hw` | **real-sensor wearable** | `-DUSE_REAL_SENSORS` + `lib_deps` (MAX3010x, TinyGPSPlus, MPU6050) |
-| `esp32_node1/2/mesh` | legacy demos | optional |
 
 > **Board id:** `esp32doit-devkit-v1`. (The original `esp32doit-devkit1` was
 > invalid and broke every build — fixed.)

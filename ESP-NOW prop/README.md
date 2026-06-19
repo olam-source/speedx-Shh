@@ -38,9 +38,6 @@ ESP-NOW prop/
 ├── src/
 │   ├── athlete_wearable/      # Body-worn node: reads metrics, gossips them to the hub
 │   ├── coach_hub/             # Central USB adapter: mesh sink + dashboard bridge
-│   ├── node_sender/           # Generic demo node (optional)
-│   ├── node_receiver/         # Generic demo node (optional)
-│   └── node_mesh/             # Generic mesh relay demo (optional)
 ├── dashboard/
 │   ├── coach_dashboard.html   # One-screen live dashboard (Web Serial, no install)
 │   └── README.md
@@ -91,12 +88,6 @@ automatically. Range scales with the team because every athlete is also a relay.
   lines (uptime, mesh peers, active athletes).
 - Accepts coach commands typed on the USB console **or** pushed by the dashboard
   and broadcasts them to the team.
-
-### Generic demo nodes (optional)
-
-`node_sender`, `node_receiver`, and `node_mesh` are the original framework
-examples (PING/PONG discovery, sensor DATA + ACK, and a TTL mesh relay). They
-share the same headers and are handy for bring-up and protocol testing.
 
 ## Message Protocol
 

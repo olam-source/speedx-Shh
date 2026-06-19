@@ -6,14 +6,12 @@
 
 ## Node roles
 
-There are exactly two roles in production (plus three optional demo nodes kept
-from the original ESP-NOW framework).
+There are exactly two node roles.
 
 | Role | Node ID | Source | Job |
 |------|---------|--------|-----|
 | **Athlete wearable** | 11, 12, 13, … (unique) | [`../src/athlete_wearable/main.cpp`](../src/athlete_wearable/main.cpp) | Read sensors, gossip own metrics toward the hub, relay others' frames, obey coach commands |
 | **Coach hub** | 250 (`COACH_HUB_NODE_ID`) | [`../src/coach_hub/main.cpp`](../src/coach_hub/main.cpp) | Collect all metrics, stream JSON over USB, beacon for discovery, broadcast coach commands |
-| *Demo: sender/receiver/mesh* | 1 / 2 / 3 | `../src/node_*` | Original framework examples for bring-up testing |
 
 `255` is the broadcast ID; `250` is reserved for the hub. Athletes take anything
 else.
@@ -68,7 +66,7 @@ sequenceDiagram
 
 ```
 include/   espnow_config.h · espnow_utils.h · peer_manager.h · athlete_sensors.h
-src/       athlete_wearable/ · coach_hub/ · node_sender|receiver|mesh/
+src/       athlete_wearable/ · coach_hub/
 dashboard/ coach_dashboard.html
 ```
 

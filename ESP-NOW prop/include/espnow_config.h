@@ -48,14 +48,9 @@ constexpr uint8_t COACH_TARGET_ALL = 0xFF;
 enum class MessageType : uint8_t {
     PING = 0,
     PONG = 1,
-    DATA = 2,
-    CONFIG = 3,
     ACK = 4,
-    ERROR = 5,
     MESH_BEACON = 6,
-    MESH_DATA = 7,
     ATHLETE_METRICS = 8,
-    ATHLETE_EVENT = 9,
     COACH_COMMAND = 10
 };
 
@@ -78,12 +73,6 @@ static_assert(offsetof(ESPNowMessage, payload) == ESPNOW_HEADER_SIZE,
               "ESP-NOW message header size changed; update ESPNOW_HEADER_SIZE");
 static_assert(sizeof(ESPNowMessage) == ESPNOW_MAX_FRAME_SIZE,
               "ESP-NOW message must fit in one ESP-NOW v1 frame");
-
-struct __attribute__((packed)) SensorDataPayload {
-    float temperature_c;
-    uint16_t humidity_percent;
-    uint16_t battery_mv;
-};
 
 struct __attribute__((packed)) AthleteMetricsPayload {
     uint8_t athlete_id;
@@ -130,15 +119,6 @@ struct PeerInfo {
     uint16_t message_count;
     bool is_active;
     uint8_t last_sequence;
-};
-
-// ===== Global Configuration =====
-struct Config {
-    uint8_t node_id;
-    uint8_t channel;
-    bool use_encryption;
-    uint8_t pmk[16];  // Primary Master Key
-    uint8_t lmk[16];  // Local Master Key
 };
 
 #endif

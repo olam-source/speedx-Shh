@@ -92,24 +92,6 @@ public:
         }
     }
 
-    void updatePeerRssi(const uint8_t* mac, int8_t rssi) {
-        PeerInfo* peer = getPeerByMac(mac);
-        if (peer) {
-            peer->rssi = rssi;
-            peer->last_seen = millis();
-        }
-    }
-
-    // Remove peer.
-    bool removePeer(uint8_t peer_id) {
-        for (int i = 0; i < peer_count; i++) {
-            if (peers[i].peer_id == peer_id) {
-                peers[i].is_active = false;
-                return true;
-            }
-        }
-        return false;
-    }
 
     // Get all active peers.
     uint8_t getActivePeerCount() const {

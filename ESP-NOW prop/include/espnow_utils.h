@@ -53,7 +53,7 @@ public:
     }
 
     // Add a peer for communication.
-    static bool addPeer(const uint8_t* peer_mac, uint8_t channel = ESPNOW_CHANNEL, bool encrypt = false, const uint8_t* lmk = nullptr) {
+    static bool addPeer(const uint8_t* peer_mac, uint8_t channel = ESPNOW_CHANNEL) {
         if (peer_mac == nullptr) {
             return false;
         }
@@ -66,11 +66,7 @@ public:
         memcpy(peerInfo.peer_addr, peer_mac, 6);
         peerInfo.channel = channel;
         peerInfo.ifidx = WIFI_IF_STA;
-        peerInfo.encrypt = encrypt;
-
-        if (encrypt && lmk != nullptr) {
-            memcpy(peerInfo.lmk, lmk, sizeof(peerInfo.lmk));
-        }
+        peerInfo.encrypt = false;
 
         esp_err_t result = esp_now_add_peer(&peerInfo);
         if (result != ESP_OK && result != ESP_ERR_ESPNOW_EXIST) {
@@ -199,14 +195,9 @@ public:
         switch (type) {
             case MessageType::PING: return "PING";
             case MessageType::PONG: return "PONG";
-            case MessageType::DATA: return "DATA";
-            case MessageType::CONFIG: return "CONFIG";
             case MessageType::ACK: return "ACK";
-            case MessageType::ERROR: return "ERROR";
             case MessageType::MESH_BEACON: return "MESH_BEACON";
-            case MessageType::MESH_DATA: return "MESH_DATA";
             case MessageType::ATHLETE_METRICS: return "ATHLETE_METRICS";
-            case MessageType::ATHLETE_EVENT: return "ATHLETE_EVENT";
             case MessageType::COACH_COMMAND: return "COACH_COMMAND";
             default: return "UNKNOWN";
         }
@@ -242,20 +233,6 @@ public:
     // Create an ACK message.
     static ESPNowMessage createAckMessage(uint8_t sender_id, uint8_t receiver_id, uint8_t ack_sequence) {
         ESPNowMessage msg = createMessage(MessageType::ACK, sender_id, receiver_id, ack_sequence);
-        return msg;
-    }
-
-    static ESPNowMessage createDataMessage(uint8_t sender_id, uint8_t receiver_id, uint8_t sequence, const void* payload, uint16_t payload_length) {
-        ESPNowMessage msg = createMessage(MessageType::DATA, sender_id, receiver_id, sequence);
-        msg.flags = ESPNOW_FLAG_ACK_REQUESTED;
-        setPayload(msg, payload, payload_length);
-        return msg;
-    }
-
-    static ESPNowMessage createMeshDataMessage(uint8_t sender_id, uint8_t receiver_id, uint8_t sequence, const void* payload, uint16_t payload_length) {
-        ESPNowMessage msg = createMessage(MessageType::MESH_DATA, sender_id, receiver_id, sequence);
-        msg.flags = ESPNOW_FLAG_ACK_REQUESTED;
-        setPayload(msg, payload, payload_length);
         return msg;
     }
 
@@ -304,29 +281,6 @@ public:
 
         memcpy(&metrics, msg.payload, sizeof(metrics));
         return true;
-    }
-
-    static void printAthleteMetricsCsv(const AthleteMetricsPayload& metrics) {
-        Serial.printf("ATHLETE,%u,%u,%u,%lu,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%d,%d,%u,%d,%u\n",
-                      metrics.athlete_id,
-                      metrics.team_id,
-                      metrics.sample_id,
-                      static_cast<unsigned long>(metrics.uptime_ms),
-                      metrics.heart_rate_bpm,
-                      metrics.pace_sec_per_mile,
-                      metrics.current_split_sec,
-                      metrics.best_split_sec,
-                      metrics.distance_m,
-                      metrics.speed_cm_s,
-                      metrics.cadence_spm,
-                      metrics.stride_length_cm,
-                      metrics.ground_contact_ms,
-                      metrics.vertical_oscillation_cm,
-                      metrics.elevation_gain_m,
-                      metrics.skin_temp_c_x10,
-                      metrics.battery_mv,
-                      metrics.signal_percent,
-                      metrics.flags);
     }
 
     // One self-describing JSON object per line, streamed over USB to the coach

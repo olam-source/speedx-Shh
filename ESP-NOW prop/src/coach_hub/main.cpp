@@ -37,11 +37,8 @@ constexpr uint8_t MAX_ATHLETES = 32;
 // ----- Roster: latest known state for each athlete --------------------------
 struct AthleteRecord {
     bool in_use;
-    AthleteMetricsPayload metrics;
-    uint8_t last_hops;
-    int8_t last_rssi;
-    uint16_t total_samples;
-    uint32_t last_update_ms;
+    uint8_t athlete_id;
+    uint32_t last_update_ms;   // for active-athlete counting
 };
 
 // ----- Gossip de-duplication cache ------------------------------------------
@@ -85,7 +82,7 @@ void rememberMessage(const ESPNowMessage& msg) {
 AthleteRecord* findOrAllocateAthlete(uint8_t athlete_id) {
     AthleteRecord* free_slot = nullptr;
     for (uint8_t i = 0; i < MAX_ATHLETES; i++) {
-        if (roster[i].in_use && roster[i].metrics.athlete_id == athlete_id) {
+        if (roster[i].in_use && roster[i].athlete_id == athlete_id) {
             return &roster[i];
         }
         if (!roster[i].in_use && free_slot == nullptr) {
@@ -105,18 +102,14 @@ uint8_t activeAthleteCount(uint32_t now) {
     return count;
 }
 
-void recordAthleteMetrics(const ESPNowMessage& msg, const AthleteMetricsPayload& metrics) {
+void recordAthleteMetrics(const AthleteMetricsPayload& metrics) {
     AthleteRecord* record = findOrAllocateAthlete(metrics.athlete_id);
     if (!record) {
         Serial.println("{\"t\":\"warn\",\"msg\":\"roster full\"}");
         return;
     }
-
     record->in_use = true;
-    record->metrics = metrics;
-    record->last_hops = msg.hop_count;
-    record->last_rssi = static_cast<int8_t>(msg.rssi);
-    record->total_samples++;
+    record->athlete_id = metrics.athlete_id;
     record->last_update_ms = millis();
 }
 
@@ -138,7 +131,7 @@ void handleAthleteMetrics(const uint8_t* mac, const ESPNowMessage& msg) {
     // Stamp the link quality of the last hop we heard it on.
     metrics.signal_percent = ESPNowUtils::rssiToPercentage(static_cast<int8_t>(msg.rssi));
 
-    recordAthleteMetrics(msg, metrics);
+    recordAthleteMetrics(metrics);
     ESPNowUtils::printAthleteMetricsJson(metrics, msg.hop_count, msg.ttl);
 
     // Acknowledge the immediate sender so wearables can prefer this hub route.
@@ -161,9 +154,6 @@ void handleIncomingMessage(const uint8_t* mac, const ESPNowMessage& msg) {
     switch (msg.type) {
         case MessageType::ATHLETE_METRICS:
             handleAthleteMetrics(mac, msg);
-            break;
-        case MessageType::ATHLETE_EVENT:
-            Serial.printf("{\"t\":\"event\",\"id\":%u,\"seq\":%u}\n", msg.sender_id, msg.sequence);
             break;
         case MessageType::PING:
             // A wearable is probing for the hub; answer so it learns our MAC.

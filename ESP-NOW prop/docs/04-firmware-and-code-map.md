@@ -11,7 +11,7 @@ A guided tour of every file, so a new developer knows where to look.
 ### [`espnow_config.h`](../include/espnow_config.h)
 The contract. Constants (channel, TTL, gossip tuning, node ids), the
 `MessageType` enum, the packed `ESPNowMessage` frame, and the typed payloads
-(`AthleteMetricsPayload`, `CoachCommandPayload`, `SensorDataPayload`). The
+(`AthleteMetricsPayload`, `CoachCommandPayload`). The
 `static_assert`s here are the wire-format guardrails.
 
 ### [`espnow_utils.h`](../include/espnow_utils.h)
@@ -57,10 +57,6 @@ lookup by id/MAC, activity updates, and timeout eviction. No dynamic allocation.
 
 `ATHLETE_NODE_ID` / `ATHLETE_TEAM_ID` come from build flags, so the *same source*
 builds every athlete — see [`../platformio.ini`](../platformio.ini).
-
-### `node_sender` / `node_receiver` / `node_mesh`
-The original ESP-NOW framework demos (PING/PONG discovery, sensor DATA+ACK, TTL
-mesh relay). Useful for radio bring-up; not part of the athlete system.
 
 ## Host — coach clients
 
