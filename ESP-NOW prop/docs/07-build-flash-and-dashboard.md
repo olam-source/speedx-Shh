@@ -1,0 +1,107 @@
+# 7 · Build, Flash & Dashboard
+
+[← Hardware & Budget](06-hardware-and-budget.md) · [Wiki home](README.md) · Next: [Manufacturing & Roadmap →](08-manufacturing-and-roadmap.md)
+
+---
+
+## Toolchain
+
+Built with **PlatformIO** (Arduino framework on the Espressif32 platform). Verified
+with PlatformIO Core 6.1.19 + espressif32 7.0.1 (Arduino-ESP32 3.x).
+
+```bash
+# Install PlatformIO (any of these)
+pip install platformio          # into a venv is cleanest
+# or: brew install platformio
+# or use the PlatformIO IDE extension in VS Code
+```
+
+First build downloads the ESP32 toolchain (~hundreds of MB), then it's cached.
+
+## Build environments
+
+Defined in [`../platformio.ini`](../platformio.ini):
+
+| Env | Builds | Notes |
+|-----|--------|-------|
+| `coach_hub` | the USB hub | default env |
+| `athlete1` / `athlete2` / `athlete3` | simulated wearables | unique ids 11/12/13, no sensors needed |
+| `athlete1_hw` | **real-sensor wearable** | `-DUSE_REAL_SENSORS` + `lib_deps` (MAX3010x, TinyGPSPlus, MPU6050) |
+| `esp32_node1/2/mesh` | legacy demos | optional |
+
+> **Board id:** `esp32doit-devkit-v1`. (The original `esp32doit-devkit1` was
+> invalid and broke every build — fixed.)
+
+## Build & flash
+
+```bash
+# Compile
+pio run -e coach_hub
+pio run -e athlete1            # simulated
+pio run -e athlete1_hw         # real sensors
+
+# Flash over USB (board connected)
+pio run -e coach_hub   -t upload
+pio run -e athlete1_hw -t upload
+
+# Serial monitor
+pio device monitor -e athlete1_hw
+```
+
+Set `upload_port` / `monitor_port` per board in `platformio.ini`. Common names:
+`/dev/cu.SLAB_USBtoUART`, `/dev/ttyUSB0`, `COM3`.
+
+### Adding athletes
+
+Copy an `[env:athleteN]` (or `[env:athleteN_hw]`) block, give it a **unique
+`ATHLETE_NODE_ID`** (anything except 250 and 255), set its ports, flash. The mesh
+discovers it automatically.
+
+### Resource use (reference build)
+
+`coach_hub`: Flash ~56%, RAM ~14%. `athlete1_hw`: Flash ~60%, RAM ~14%. Plenty
+of headroom on a 4 MB ESP32.
+
+## The coach dashboard
+
+[`../dashboard/coach_dashboard.html`](../dashboard/coach_dashboard.html) — a
+single self-contained page. Full notes in
+[`../dashboard/README.md`](../dashboard/README.md).
+
+### Run it
+
+1. Flash `coach_hub`, plug it into the laptop.
+2. Open `coach_dashboard.html` in **Chrome or Edge** (Web Serial isn't in
+   Safari/Firefox). `file://` works.
+3. Click **Connect Hub**, pick the serial port (115200 baud).
+4. Athlete cards stream in live.
+
+> Close any other serial monitor first — only one program can hold the port.
+
+### What it shows
+
+Per athlete: HR with training-zone color (Z1–Z5), pace/mi, current & best split,
+distance, cadence, stride, ground-contact, speed, skin temp, link %, hop count,
+battery, and GPS/lap/low-battery badges. Cards dim when an athlete goes stale
+(~12 s no data).
+
+### Coach controls
+
+Buttons send commands back down the mesh: **Start** (zero session), **Stop**,
+**Mark Lap**, **Reset Best**. Same as typing `start` / `stop` / `lap` / `reset`
+into the hub's USB console.
+
+## The USB data format
+
+The hub emits one JSON object per line — easy to parse anywhere (browser, Python,
+Grafana, a CSV logger):
+
+```json
+{"t":"athlete","id":11,"team":1,"sample":42,"uptime_ms":84000,"hr":154,
+ "pace_s":362,"split_s":361,"best_split_s":349,"dist_m":336,"speed_cms":430,
+ "cadence":176,"stride_cm":145,"gct_ms":0,"vosc_cm":9,"elev_m":1,
+ "skin_c10":335,"batt_mv":3870,"signal":78,"flags":3,"hops":1,"ttl":3}
+```
+
+Plus periodic `{"t":"hub",...}` heartbeat lines (uptime, mesh peers, active
+athletes).
