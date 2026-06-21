@@ -18,7 +18,7 @@ appear on one live screen.
          \             |               /
           \         gossip            /   (relayed hop-by-hop,
            \          |              /      no Wi-Fi router)
-                  [ Coach Hub ] --USB--> Coach laptop --> Web dashboard
+                  [ Coach Hub ] --USB--> Coach laptop --> App dashboard
                   (mesh sink)                             (one screen)
 ```
 
@@ -39,7 +39,7 @@ ESP-NOW prop/
 │   ├── athlete_wearable/      # Body-worn node: reads metrics, gossips them to the hub
 │   ├── coach_hub/             # Central USB adapter: mesh sink + dashboard bridge
 ├── dashboard/
-│   ├── coach_dashboard.html   # One-screen live dashboard (Web Serial, no install)
+│   ├── coach_dashboard.html   # One-screen live dashboard
 │   └── README.md
 ├── HARDWARE.md                # Parts list, prices, wiring, pin flags
 ├── platformio.ini
@@ -86,7 +86,7 @@ automatically. Range scales with the team because every athlete is also a relay.
 - Maintains a roster of every athlete's latest metrics.
 - Emits one JSON line per metric for the dashboard, plus periodic hub-status
   lines (uptime, mesh peers, active athletes).
-- Accepts coach commands typed on the USB console **or** pushed by the dashboard
+- Accepts coach commands pushed by the dashboard
   and broadcasts them to the team.
 
 ## Message Protocol
@@ -177,7 +177,7 @@ Common ports: `/dev/cu.SLAB_USBtoUART`, `/dev/ttyUSB0`, `/dev/ttyACM0`, `COM3`.
 1. Flash one board with `coach_hub`; leave it plugged into the coach's laptop.
 2. Flash each athlete board with `athlete1`, `athlete2`, … (unique IDs).
 3. Power on the wearables — they self-discover and start gossiping.
-4. Open `dashboard/coach_dashboard.html` in Chrome/Edge, click **Connect Hub**,
+4. Open downloadable Coach App, click **Connect Hub**,
    and pick the hub's serial port. Athlete cards stream in live.
    *(Close any other serial monitor first — the port allows one reader.)*
 
