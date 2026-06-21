@@ -162,6 +162,7 @@ void handleIncomingMessage(const uint8_t* mac, const ESPNowMessage& msg) {
         case MessageType::MESH_BEACON:
         case MessageType::ACK:
         case MessageType::PONG:
+        case MessageType::COACH_COMMAND:  // our own commands echoed back through the mesh
             break;
         default:
             Serial.printf("{\"t\":\"rx\",\"type\":\"%s\",\"from\":%u}\n",
