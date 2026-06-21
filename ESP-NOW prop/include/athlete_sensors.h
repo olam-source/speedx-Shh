@@ -9,7 +9,7 @@
 //   * default (no flag) -> simulated metrics, so the mesh/dashboard can be
 //     tested on a bare ESP32 with no sensors attached.
 //   * -DUSE_REAL_SENSORS -> reads real hardware:
-//        MAX30003  ECG chip — single-lead HR via hardware RTOR detection (SPI)
+//        MAXM86161 optical HR sensor — green LED PPG, I2C, wristband/armband form factor
 //        MPU-6050  6-axis IMU for cadence/stride/dynamics (I2C)
 //        u-blox NEO-M8N (or NEO-6M) GPS for distance/pace/splits (UART2)
 //        battery   ADC voltage divider (e.g. LOLIN D32 onboard, GPIO35)
@@ -30,7 +30,7 @@
 // Service (0x180D) so any Garmin, Coros, Apple Watch, or Wahoo can pair to it
 // once in their sensor settings and auto-reconnect every session from then on.
 //
-// No external strap needed. HR comes from the onboard MAX30003 ECG chip.
+// No external strap needed. HR comes from the onboard MAXM86161 optical sensor.
 // Multiple clients can connect simultaneously (e.g. coach's tablet + athlete's watch).
 // ============================================================================
 #if defined(USE_BLE_HR)
@@ -91,20 +91,10 @@ private:
 
 // ---- Pin / config defaults (override with -D build flags if your wiring differs)
 #ifndef PIN_I2C_SDA
-#define PIN_I2C_SDA 21          // MPU-6050 SDA
+#define PIN_I2C_SDA 21          // MAXM86161 + MPU-6050 shared SDA
 #endif
 #ifndef PIN_I2C_SCL
-#define PIN_I2C_SCL 22          // MPU-6050 SCL
-#endif
-// MAX30003 ECG — SPI. Defaults match a typical ESP32 DevKit layout.
-#ifndef PIN_ECG_CS
-#define PIN_ECG_CS   5
-#endif
-#ifndef PIN_ECG_INT
-#define PIN_ECG_INT  34
-#endif
-#ifndef PIN_ECG_FCLK
-#define PIN_ECG_FCLK 26         // ponytail: LEDC ~32768 Hz; use ext oscillator for tighter BPM
+#define PIN_I2C_SCL 22          // MAXM86161 + MPU-6050 shared SCL
 #endif
 #ifndef PIN_GPS_RX
 #define PIN_GPS_RX 16           // ESP32 RX2  <- GPS TX
@@ -126,26 +116,26 @@ constexpr float MILE_METERS = 1609.344f;
 
 #if defined(USE_REAL_SENSORS)
 #include <Wire.h>
-#include <SPI.h>                // MAX30003 ECG
 #include <TinyGPS++.h>
 #include <Adafruit_MPU6050.h>
 #include <Adafruit_Sensor.h>
 
-// MAX30003 register map — 6-bit addresses; SPI frame: (reg<<1)|R/W then 3 data bytes MSB-first.
-// ponytail: config values from Protocentral MAX30003 reference implementation.
-namespace Ecg {
-    constexpr uint8_t SW_RST     = 0x08;
-    constexpr uint8_t SYNCH      = 0x09;
-    constexpr uint8_t EN_INT     = 0x02;
-    constexpr uint8_t CNFG_GEN   = 0x10;
-    constexpr uint8_t CNFG_ECG   = 0x15;
-    constexpr uint8_t CNFG_RTOR1 = 0x1D;
-    constexpr uint8_t CNFG_RTOR2 = 0x1E;
-    constexpr uint8_t RTOR       = 0x25;
+// MAXM86161 I2C register map (7-bit address 0x62).
+// ponytail: green LED only — best for wrist/armband; add IR slot if SpO2 needed later.
+namespace Ppg {
+    constexpr uint8_t ADDR     = 0x62;
+    constexpr uint8_t INT_EN1  = 0x02;
+    constexpr uint8_t FIFO_WR  = 0x04;
+    constexpr uint8_t FIFO_RD  = 0x06;
+    constexpr uint8_t FIFO_DAT = 0x07;
+    constexpr uint8_t FIFO_CF1 = 0x08;
+    constexpr uint8_t FIFO_CF2 = 0x09;
+    constexpr uint8_t SYS_CTRL = 0x0A;
+    constexpr uint8_t PPG_CF1  = 0x0B;   // [7:5] sample rate, [4:3] ADC range
+    constexpr uint8_t PPG_CF2  = 0x0C;   // [7:6] LED range, [3:0] pulse width
+    constexpr uint8_t LED_SEQ1 = 0x12;   // [3:0] slot1 LED: 0=off, 1=green, 2=IR, 3=red
+    constexpr uint8_t LED1_PA  = 0x23;   // green pulse amplitude (0x00–0xFF, LSB=0.12mA)
 }
-
-static volatile bool ecgIntFired = false;
-static void IRAM_ATTR ecgIsr() { ecgIntFired = true; }
 #endif
 
 class AthleteSensors {
@@ -160,27 +150,17 @@ public:
         bool ok = true;
         Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL);
 
-        // ECG heart rate (MAX30003 via SPI)
-        // ponytail: LEDC generates ~32768 Hz FCLK; replace with ext oscillator for tighter BPM
-        ledcSetup(7, 32768, 1);
-        ledcAttachPin(PIN_ECG_FCLK, 7);
-        ledcWrite(7, 1);
-
-        SPI.begin();
-        pinMode(PIN_ECG_CS, OUTPUT);
-        digitalWrite(PIN_ECG_CS, HIGH);
-        pinMode(PIN_ECG_INT, INPUT_PULLUP);
-
-        ecgWrite(Ecg::SW_RST,     0x000000);
+        // MAXM86161 optical HR (I2C, green LED, wristband/armband)
+        ppgWrite(Ppg::SYS_CTRL,  0x01);         // software reset
         delay(100);
-        ecgWrite(Ecg::CNFG_GEN,   0x080004);   // EN_ECG
-        ecgWrite(Ecg::CNFG_ECG,   0x005000);   // 256 sps, 20 dB, 0.5 Hz HPF
-        ecgWrite(Ecg::CNFG_RTOR1, 0x3FC600);   // RTOR detection
-        ecgWrite(Ecg::CNFG_RTOR2, 0x202000);
-        ecgWrite(Ecg::EN_INT,     0x000401);   // RTOR interrupt on INT1
-        ecgWrite(Ecg::SYNCH,      0x000000);   // start ECG
-        attachInterrupt(digitalPinToInterrupt(PIN_ECG_INT), ecgIsr, FALLING);
-        Serial.println("MAX30003 ECG ready");
+        ppgWrite(Ppg::FIFO_CF1,  0x0F);         // no averaging, A_FULL at 15 samples
+        ppgWrite(Ppg::FIFO_CF2,  0x02);         // clear FIFO stat pointer on read
+        ppgWrite(Ppg::PPG_CF1,   0x50);         // ponytail: 100 sps, ADC 16384nA; drop to 0x00 if saturation
+        ppgWrite(Ppg::PPG_CF2,   0x00);         // LED range 31mA, shortest pulse width
+        ppgWrite(Ppg::LED_SEQ1,  0x01);         // slot 1 = LED1 (green)
+        ppgWrite(Ppg::LED1_PA,   0x20);         // ponytail: ~3.84mA; raise to 0x40 if signal is weak
+        ppgWrite(Ppg::INT_EN1,   0x80);         // enable A_FULL interrupt
+        Serial.println("MAXM86161 optical HR ready");
 
         // IMU (MPU-6050)
         if (mpu_.begin()) {
@@ -210,7 +190,7 @@ public:
     void update() {
 #if defined(USE_REAL_SENSORS)
         uint32_t now = millis();
-        updateEcg();
+        updatePpg();
         updateImu(now);
         updateGps(now);
         if (now - lastBatteryMs_ >= 5000) {
@@ -309,8 +289,15 @@ private:
     TinyGPSPlus gps_;
     bool imuReady_ = false;
 
-    // MAX30003 ECG heart rate (interrupt-driven, updated in updateEcg())
-    uint16_t bpmEcg_ = 0;
+    // MAXM86161 optical HR state
+    uint16_t bpmPpg_         = 0;
+    float    ppgBaseline_    = 0.0f;
+    float    ppgPeak_        = 0.0f;
+    float    ppgValley_      = 0.0f;
+    bool     ppgArmed_       = true;
+    uint32_t ppgLastBeatMs_  = 0;
+    float    ppgRates_[4]    = {};
+    uint8_t  ppgIdx_         = 0;
 
     // IMU / cadence state
     float accelHpf_ = 0.0f, accelPrev_ = 0.0f;
@@ -336,39 +323,66 @@ private:
     uint16_t batteryMv_ = 4000;
     uint32_t lastBatteryMs_ = 0;
 
-    void ecgWrite(uint8_t reg, uint32_t data) {
-        SPI.beginTransaction(SPISettings(4000000, MSBFIRST, SPI_MODE0));
-        digitalWrite(PIN_ECG_CS, LOW);
-        SPI.transfer(reg << 1);
-        SPI.transfer((data >> 16) & 0xFF);
-        SPI.transfer((data >>  8) & 0xFF);
-        SPI.transfer( data        & 0xFF);
-        digitalWrite(PIN_ECG_CS, HIGH);
-        SPI.endTransaction();
+    void ppgWrite(uint8_t reg, uint8_t val) {
+        Wire.beginTransmission(Ppg::ADDR);
+        Wire.write(reg); Wire.write(val);
+        Wire.endTransmission();
     }
 
-    uint32_t ecgRead(uint8_t reg) {
-        SPI.beginTransaction(SPISettings(4000000, MSBFIRST, SPI_MODE0));
-        digitalWrite(PIN_ECG_CS, LOW);
-        SPI.transfer((reg << 1) | 0x01);
-        uint32_t d = ((uint32_t)SPI.transfer(0) << 16)
-                   | ((uint32_t)SPI.transfer(0) <<  8)
-                   |  (uint32_t)SPI.transfer(0);
-        digitalWrite(PIN_ECG_CS, HIGH);
-        SPI.endTransaction();
-        return d;
+    uint8_t ppgRead(uint8_t reg) {
+        Wire.beginTransmission(Ppg::ADDR);
+        Wire.write(reg);
+        Wire.endTransmission(false);
+        Wire.requestFrom(Ppg::ADDR, (uint8_t)1);
+        return Wire.available() ? Wire.read() : 0;
     }
 
-    void updateEcg() {
-        if (!ecgIntFired) return;
-        ecgIntFired = false;
-        uint32_t rtor = ecgRead(Ecg::RTOR);
-        uint32_t val  = (rtor >> 10) & 0x3FFF;
-        if (val == 0) return;
-        // ponytail: assumes FCLK=32768 Hz and RTOR_WNDW=3 per CNFG_RTOR1=0x3FC600
-        // BPM = 60 * 32768 / (8 * val) = 245760 / val
-        uint16_t bpm = static_cast<uint16_t>(245760UL / val);
-        if (bpm >= 30 && bpm <= 250) bpmEcg_ = bpm;
+    void detectBeat(uint32_t sample, uint32_t now) {
+        // DC baseline removal (slow IIR, ~2s time constant at 100 sps)
+        ppgBaseline_ += (static_cast<float>(sample) - ppgBaseline_) * 0.02f;
+        float sig = static_cast<float>(sample) - ppgBaseline_;
+
+        // Auto-scale peak/valley to handle varying skin tone and LED coupling
+        if (sig > ppgPeak_)   ppgPeak_   = sig; else ppgPeak_   *= 0.998f;
+        if (sig < ppgValley_) ppgValley_ = sig; else ppgValley_ *= 0.998f;
+        float amp = ppgPeak_ - ppgValley_;
+        if (amp < 300) return;   // ponytail: no contact or too much motion noise; tune 300 per skin tone
+
+        bool above = sig > ppgValley_ + amp * 0.5f;
+        if (above && ppgArmed_ && (now - ppgLastBeatMs_) > 300) {
+            uint32_t delta = now - ppgLastBeatMs_;
+            ppgLastBeatMs_ = now;
+            ppgArmed_ = false;
+            float bpm = 60000.0f / delta;
+            if (bpm >= 30.0f && bpm <= 230.0f) {
+                ppgRates_[ppgIdx_++ % 4] = bpm;
+                float sum = 0.0f; uint8_t n = 0;
+                for (float r : ppgRates_) if (r > 0.0f) { sum += r; n++; }
+                if (n) bpmPpg_ = static_cast<uint16_t>(sum / n);
+            }
+        } else if (!above) {
+            ppgArmed_ = true;
+        }
+    }
+
+    void updatePpg() {
+        uint8_t wr    = ppgRead(Ppg::FIFO_WR);
+        uint8_t rd    = ppgRead(Ppg::FIFO_RD);
+        uint8_t avail = (wr - rd) & 0x1F;     // FIFO is 32 samples deep
+        uint32_t now  = millis();
+        while (avail-- > 0) {
+            Wire.beginTransmission(Ppg::ADDR);
+            Wire.write(Ppg::FIFO_DAT);
+            Wire.endTransmission(false);
+            Wire.requestFrom(Ppg::ADDR, (uint8_t)3);
+            if (Wire.available() < 3) break;
+            uint32_t raw = ((uint32_t)Wire.read() << 16)
+                         | ((uint32_t)Wire.read() <<  8)
+                         |  (uint32_t)Wire.read();
+            // MAXM86161 FIFO: bits [2:0] = LED tag (1=green,2=IR,3=red), [23:3] = 19-bit sample
+            if ((raw & 0x07) != 1) continue;   // keep only green channel
+            detectBeat(raw >> 3, now);
+        }
     }
 
     void updateImu(uint32_t now) {
@@ -467,7 +481,7 @@ private:
     }
 
     void fillReal(AthleteMetricsPayload& m) {
-        m.heart_rate_bpm = bpmEcg_;
+        m.heart_rate_bpm = bpmPpg_;
         m.pace_sec_per_mile = gpsSpeedMps_ > 0.4f
             ? static_cast<uint16_t>(min<float>(MILE_METERS / gpsSpeedMps_, 65000.0f)) : 0;
         m.current_split_sec = currentSplitSec_;
@@ -485,7 +499,7 @@ private:
 
         uint16_t flags = 0;
         if (gpsFix_) flags |= ATHLETE_FLAG_GPS_LOCK;
-        if (bpmEcg_ > 0) flags |= ATHLETE_FLAG_HEART_RATE_VALID;
+        if (bpmPpg_ > 0) flags |= ATHLETE_FLAG_HEART_RATE_VALID;
         if (splitJustMarked_) { flags |= ATHLETE_FLAG_SPLIT_MARKER; splitJustMarked_ = false; }
         if (forceSplit_) { flags |= ATHLETE_FLAG_SPLIT_MARKER; forceSplit_ = false; }
         if (batteryMv_ < 3600) flags |= ATHLETE_FLAG_LOW_BATTERY;
