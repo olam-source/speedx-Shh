@@ -301,8 +301,19 @@ void handleSerialCommand(String line) {
     } else if (verb == "ota") {
         ota.begin(String("SpeedX-OTA-") + g_athlete_id);
         ota_mode = true;
+#if defined(USE_BLE_HR)
+    } else if (verb == "strap") {
+        Serial.println(sensors.bleStatus());
+    } else if (verb == "strap-reset") {
+        sensors.resetBleStrap(prefs);
+        Serial.println("BLE strap cleared — put strap on athlete and power it on");
+#endif
     } else if (verb == "help") {
-        Serial.println("commands: id <1-249> | team <0-255> | info | ota | reset-id | help");
+        Serial.println("commands: id <1-249> | team <0-255> | info | ota | reset-id"
+#if defined(USE_BLE_HR)
+                       " | strap | strap-reset"
+#endif
+                       " | help");
     } else {
         Serial.printf("unknown command '%s' (try help)\n", verb.c_str());
     }
@@ -367,6 +378,12 @@ void setup() {
     if (!sensors.begin()) {
         Serial.println("Sensor init incomplete - continuing with available data");
     }
+
+#if defined(USE_BLE_HR)
+    sensors.beginBle(prefs);   // loads stored strap MAC and starts auto-connect
+    Serial.println("BLE HR: " + sensors.bleStatus());
+    Serial.println("  To pair a strap for the first time: type 'strap-reset'");
+#endif
 
     sendDiscoveryPing();
     last_discovery_time = millis();
