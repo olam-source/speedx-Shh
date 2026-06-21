@@ -302,16 +302,13 @@ void handleSerialCommand(String line) {
         ota.begin(String("SpeedX-OTA-") + g_athlete_id);
         ota_mode = true;
 #if defined(USE_BLE_HR)
-    } else if (verb == "strap") {
+    } else if (verb == "ble") {
         Serial.println(sensors.bleStatus());
-    } else if (verb == "strap-reset") {
-        sensors.resetBleStrap(prefs);
-        Serial.println("BLE strap cleared — put strap on athlete and power it on");
 #endif
     } else if (verb == "help") {
         Serial.println("commands: id <1-249> | team <0-255> | info | ota | reset-id"
 #if defined(USE_BLE_HR)
-                       " | strap | strap-reset"
+                       " | ble"
 #endif
                        " | help");
     } else {
@@ -380,9 +377,9 @@ void setup() {
     }
 
 #if defined(USE_BLE_HR)
-    sensors.beginBle(prefs);   // loads stored strap MAC and starts auto-connect
-    Serial.println("BLE HR: " + sensors.bleStatus());
-    Serial.println("  To pair a strap for the first time: type 'strap-reset'");
+    sensors.beginBle();
+    Serial.println(sensors.bleStatus());
+    Serial.println("  Pair once in Garmin/Coros/Apple Watch sensor settings (device name: SpeedX)");
 #endif
 
     sendDiscoveryPing();
