@@ -22,7 +22,182 @@
 // ============================================================================
 
 #include <Arduino.h>
+#include <Preferences.h>
 #include "espnow_config.h"
+
+// ============================================================================
+// BleHrReader — pairs once with any standard BLE Heart Rate strap, stores the
+// MAC in NVS, and auto-reconnects on every subsequent boot. Works in parallel
+// with the athlete's Garmin/Coros watch: those receive the same strap's ANT+
+// broadcast simultaneously — zero disruption to existing tracking workflows.
+//
+// Supported straps (anything advertising BLE Heart Rate Service 0x180D):
+//   CooSpo H6 / H808S, Polar H9 / H10, Garmin HRM-Dual / HRM-Pro,
+//   Wahoo TICKR, Magene H64, and most generic ANT+/BLE chest straps.
+//
+// First-time setup (one command, one time per athlete):
+//   1. Flash the wearable.
+//   2. Open serial monitor, type:  strap-reset
+//   3. Put the HR strap on the athlete and power it on.
+//   4. ESP32 finds it, bonds, prints "BLE HR strap bonded".  Done.
+//      Every boot after this auto-connects with no user action.
+// ============================================================================
+#if defined(USE_BLE_HR)
+#include <NimBLEDevice.h>
+
+class BleHrReader : public NimBLEClientCallbacks {
+public:
+    // Call once from setup(), after Preferences::begin().
+    void begin(Preferences& prefs) {
+        prefs_ = &prefs;
+        NimBLEDevice::init("");
+        NimBLEDevice::setSecurityAuth(BLE_SM_PAIR_AUTHREQ_BOND);
+
+        String addr = prefs_->getString("strap_addr", "");
+        if (addr.length() == 17) {
+            storedAddr_ = addr.c_str();
+            storedType_ = prefs_->getUChar("strap_atype", BLE_ADDR_PUBLIC);
+            hasMac_ = true;
+            connectDirect();
+        } else {
+            startScan();
+        }
+    }
+
+    // Call every loop() — drives reconnect after drop-outs.
+    void update() {
+        if (connected_) return;
+
+        // A scan result arrived on the NimBLE task; connect from this task.
+        if (foundDevice_) {
+            foundDevice_ = false;
+            doConnect(foundAddress_);
+            return;
+        }
+
+        if (scanning_) return;
+        if (millis() - lastAttemptMs_ < RECONNECT_MS) return;
+        hasMac_ ? connectDirect() : startScan();
+    }
+
+    uint16_t hr()        const { return hr_; }
+    bool     connected() const { return connected_; }
+
+    // Called by `strap-reset` serial command. Clears stored MAC and rescans.
+    void resetPairing(Preferences& prefs) {
+        prefs.remove("strap_addr");
+        prefs.remove("strap_atype");
+        hasMac_ = false;
+        storedAddr_.clear();
+        if (client_) client_->disconnect();
+        startScan();
+    }
+
+    String statusString() const {
+        if (connected_) return "BLE HR connected, HR=" + String(hr_) + " bpm";
+        if (scanning_)  return "BLE HR scanning for strap...";
+        if (hasMac_)    return "BLE HR bonded, reconnecting...";
+        return "BLE HR no strap paired — type 'strap-reset' to pair";
+    }
+
+private:
+    static constexpr uint32_t RECONNECT_MS    = 5000;
+    static constexpr uint32_t SCAN_DURATION_S = 8;
+
+    Preferences*   prefs_       = nullptr;
+    NimBLEClient*  client_      = nullptr;
+    std::string    storedAddr_;
+    uint8_t        storedType_  = BLE_ADDR_PUBLIC;
+    bool           hasMac_      = false;
+    volatile bool  connected_   = false;
+    volatile bool  scanning_    = false;
+    volatile bool  foundDevice_ = false;   // set on NimBLE task, read on app task
+    NimBLEAddress  foundAddress_;
+    volatile uint16_t hr_       = 0;
+    uint32_t       lastAttemptMs_ = 0;
+
+    // ---- NimBLEClientCallbacks (runs on NimBLE task) ----
+    void onDisconnect(NimBLEClient*, int) override {
+        connected_    = false;
+        hr_           = 0;
+        lastAttemptMs_ = millis();
+    }
+
+    // ---- Connection helpers (run on app task via update()) ----
+    void connectDirect() {
+        lastAttemptMs_ = millis();
+        doConnect(NimBLEAddress(storedAddr_, storedType_));
+    }
+
+    void doConnect(NimBLEAddress addr) {
+        client_ = NimBLEDevice::createClient();
+        client_->setClientCallbacks(this, false);
+
+        if (!client_->connect(addr)) {
+            NimBLEDevice::deleteClient(client_);
+            client_      = nullptr;
+            lastAttemptMs_ = millis();
+            return;
+        }
+
+        auto* svc = client_->getService("180d");
+        auto* chr = svc ? svc->getCharacteristic("2a37") : nullptr;
+        if (!chr || !chr->canNotify()) {
+            client_->disconnect();
+            return;
+        }
+
+        // Lambda capture: BleHrReader outlives all BLE objects so the pointer
+        // is valid for the session lifetime.
+        BleHrReader* self = this;
+        chr->subscribe(true,
+            [self](NimBLERemoteCharacteristic*, uint8_t* data, size_t len, bool) {
+                if (len < 2) return;
+                // BLE HRS wire format: flags byte, then HR as uint8 or uint16
+                self->hr_ = (data[0] & 0x01)
+                    ? (uint16_t)(data[1] | ((uint16_t)data[2] << 8))
+                    : data[1];
+            });
+
+        // Persist on first successful bond
+        if (!hasMac_) {
+            storedAddr_ = addr.toString();
+            storedType_ = (uint8_t)addr.getType();
+            prefs_->putString("strap_addr", String(storedAddr_.c_str()));
+            prefs_->putUChar("strap_atype", storedType_);
+            hasMac_ = true;
+            Serial.println("BLE HR strap bonded — auto-connects from now on");
+            Serial.println("Type 'strap-reset' if you ever need to pair a different strap");
+        }
+        connected_ = true;
+    }
+
+    void startScan() {
+        if (scanning_) return;
+        scanning_      = true;
+        lastAttemptMs_ = millis();
+        auto* scan = NimBLEDevice::getScan();
+        scan->setAdvertisedDeviceCallbacks(new ScanCB(this), true);
+        scan->setActiveScan(false);   // passive is enough to spot the HR service UUID
+        scan->start(SCAN_DURATION_S, [](NimBLEScanResults r) {
+            NimBLEDevice::getScan()->clearResults();
+        }, false);
+    }
+
+    // Runs on NimBLE task: just record the address; connect on the app task.
+    struct ScanCB : NimBLEAdvertisedDeviceCallbacks {
+        BleHrReader* r;
+        explicit ScanCB(BleHrReader* rr) : r(rr) {}
+        void onResult(NimBLEAdvertisedDevice* dev) override {
+            if (!dev->isAdvertisingService(NimBLEUUID("180d"))) return;
+            NimBLEDevice::getScan()->stop();
+            r->foundAddress_ = dev->getAddress();
+            r->foundDevice_  = true;
+            r->scanning_     = false;
+        }
+    };
+};
+#endif // USE_BLE_HR
 
 // ---- Pin / config defaults (override with -D build flags if your wiring differs)
 #ifndef PIN_I2C_SDA
@@ -60,6 +235,16 @@ constexpr float MILE_METERS = 1609.344f;
 
 class AthleteSensors {
 public:
+#if defined(USE_BLE_HR)
+    // Call once from setup(), after Preferences::begin() and sensor begin().
+    void beginBle(Preferences& prefs) { ble_.begin(prefs); }
+
+    // Called from `strap-reset` serial command.
+    void resetBleStrap(Preferences& prefs) { ble_.resetPairing(prefs); }
+
+    String bleStatus() const { return ble_.statusString(); }
+#endif
+
     bool begin() {
 #if defined(USE_REAL_SENSORS)
         bool ok = true;
@@ -113,6 +298,9 @@ public:
             updateBattery();
         }
 #endif
+#if defined(USE_BLE_HR)
+        ble_.update();  // drives BLE reconnect state machine
+#endif
     }
 
     // Populate the sensor-derived fields of a metrics frame. Identity fields
@@ -122,6 +310,14 @@ public:
         fillReal(m);
 #else
         fillSimulated(m);
+#endif
+#if defined(USE_BLE_HR)
+        // BLE chest strap overrides MAX30102 / simulated HR when connected.
+        // Falls back to whatever fillReal/fillSimulated set when strap is absent.
+        if (ble_.connected()) {
+            m.heart_rate_bpm = ble_.hr();
+            m.flags |= ATHLETE_FLAG_HEART_RATE_VALID;
+        }
 #endif
     }
 
@@ -146,6 +342,10 @@ public:
     void markLap()   { forceSplit_ = true; }
 
 private:
+#if defined(USE_BLE_HR)
+    BleHrReader ble_;
+#endif
+
     uint32_t sessionStartMs_ = 0;
     uint16_t bestSplitSec_ = 0xFFFF;
     bool forceSplit_ = false;
