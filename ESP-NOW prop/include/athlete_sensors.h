@@ -9,7 +9,7 @@
 //   * default (no flag) -> simulated metrics, so the mesh/dashboard can be
 //     tested on a bare ESP32 with no sensors attached.
 //   * -DUSE_REAL_SENSORS -> reads real hardware:
-//        MAX30102  optical heart rate / SpO2 sensor (I2C)
+//        MAX30003  ECG chip — single-lead HR via hardware RTOR detection (SPI)
 //        MPU-6050  6-axis IMU for cadence/stride/dynamics (I2C)
 //        u-blox NEO-M8N (or NEO-6M) GPS for distance/pace/splits (UART2)
 //        battery   ADC voltage divider (e.g. LOLIN D32 onboard, GPIO35)
@@ -26,185 +26,85 @@
 #include "espnow_config.h"
 
 // ============================================================================
-// BleHrReader — pairs once with any standard BLE Heart Rate strap, stores the
-// MAC in NVS, and auto-reconnects on every subsequent boot. Works in parallel
-// with the athlete's Garmin/Coros watch: those receive the same strap's ANT+
-// broadcast simultaneously — zero disruption to existing tracking workflows.
+// BleHrServer — SpeedX IS the chest strap. Advertises standard BLE Heart Rate
+// Service (0x180D) so any Garmin, Coros, Apple Watch, or Wahoo can pair to it
+// once in their sensor settings and auto-reconnect every session from then on.
 //
-// Supported straps (anything advertising BLE Heart Rate Service 0x180D):
-//   CooSpo H6 / H808S, Polar H9 / H10, Garmin HRM-Dual / HRM-Pro,
-//   Wahoo TICKR, Magene H64, and most generic ANT+/BLE chest straps.
-//
-// First-time setup (one command, one time per athlete):
-//   1. Flash the wearable.
-//   2. Open serial monitor, type:  strap-reset
-//   3. Put the HR strap on the athlete and power it on.
-//   4. ESP32 finds it, bonds, prints "BLE HR strap bonded".  Done.
-//      Every boot after this auto-connects with no user action.
+// No external strap needed. HR comes from the onboard MAX30003 ECG chip.
+// Multiple clients can connect simultaneously (e.g. coach's tablet + athlete's watch).
 // ============================================================================
 #if defined(USE_BLE_HR)
 #include <NimBLEDevice.h>
 
-class BleHrReader : public NimBLEClientCallbacks {
+class BleHrServer : public NimBLEServerCallbacks {
 public:
-    // Call once from setup(), after Preferences::begin().
-    void begin(Preferences& prefs) {
-        prefs_ = &prefs;
-        NimBLEDevice::init("");
-        NimBLEDevice::setSecurityAuth(BLE_SM_PAIR_AUTHREQ_BOND);
+    void begin() {
+        NimBLEDevice::init("SpeedX");
+        auto* srv = NimBLEDevice::createServer();
+        srv->setCallbacks(this);
 
-        String addr = prefs_->getString("strap_addr", "");
-        if (addr.length() == 17) {
-            storedAddr_ = addr.c_str();
-            storedType_ = prefs_->getUChar("strap_atype", BLE_ADDR_PUBLIC);
-            hasMac_ = true;
-            connectDirect();
-        } else {
-            startScan();
-        }
+        auto* svc   = srv->createService("180d");
+        hrChar_     = svc->createCharacteristic("2a37",
+                          NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
+        auto* loc   = svc->createCharacteristic("2a38", NIMBLE_PROPERTY::READ);
+        uint8_t chest = 1;
+        loc->setValue(&chest, 1);   // body sensor location: chest
+        svc->start();
+
+        NimBLEDevice::getAdvertising()->addServiceUUID("180d");
+        NimBLEDevice::getAdvertising()->start();
     }
 
-    // Call every loop() — drives reconnect after drop-outs.
-    void update() {
-        if (connected_) return;
-
-        // A scan result arrived on the NimBLE task; connect from this task.
-        if (foundDevice_) {
-            foundDevice_ = false;
-            doConnect(foundAddress_);
-            return;
-        }
-
-        if (scanning_) return;
-        if (millis() - lastAttemptMs_ < RECONNECT_MS) return;
-        hasMac_ ? connectDirect() : startScan();
+    // Push a new HR value to all connected watches/apps.
+    void notify(uint16_t bpm) {
+        if (!connected_ || !hrChar_) return;
+        uint8_t data[2] = {0x00, (uint8_t)min<uint16_t>(bpm, 255)};
+        hrChar_->setValue(data, 2);
+        hrChar_->notify();
     }
 
-    uint16_t hr()        const { return hr_; }
-    bool     connected() const { return connected_; }
-
-    // Called by `strap-reset` serial command. Clears stored MAC and rescans.
-    void resetPairing(Preferences& prefs) {
-        prefs.remove("strap_addr");
-        prefs.remove("strap_atype");
-        hasMac_ = false;
-        storedAddr_.clear();
-        if (client_) client_->disconnect();
-        startScan();
-    }
+    bool    connected()   const { return connected_; }
+    uint8_t clientCount() const { return clients_; }
 
     String statusString() const {
-        if (connected_) return "BLE HR connected, HR=" + String(hr_) + " bpm";
-        if (scanning_)  return "BLE HR scanning for strap...";
-        if (hasMac_)    return "BLE HR bonded, reconnecting...";
-        return "BLE HR no strap paired — type 'strap-reset' to pair";
+        return connected_
+            ? "BLE HR: " + String(clients_) + " client(s) connected"
+            : "BLE HR: advertising as 'SpeedX' — pair in watch sensor settings";
     }
 
 private:
-    static constexpr uint32_t RECONNECT_MS    = 5000;
-    static constexpr uint32_t SCAN_DURATION_S = 8;
+    NimBLECharacteristic* hrChar_ = nullptr;
+    volatile bool    connected_ = false;
+    volatile uint8_t clients_   = 0;
 
-    Preferences*   prefs_       = nullptr;
-    NimBLEClient*  client_      = nullptr;
-    std::string    storedAddr_;
-    uint8_t        storedType_  = BLE_ADDR_PUBLIC;
-    bool           hasMac_      = false;
-    volatile bool  connected_   = false;
-    volatile bool  scanning_    = false;
-    volatile bool  foundDevice_ = false;   // set on NimBLE task, read on app task
-    NimBLEAddress  foundAddress_;
-    volatile uint16_t hr_       = 0;
-    uint32_t       lastAttemptMs_ = 0;
-
-    // ---- NimBLEClientCallbacks (runs on NimBLE task) ----
-    void onDisconnect(NimBLEClient*, int) override {
-        connected_    = false;
-        hr_           = 0;
-        lastAttemptMs_ = millis();
-    }
-
-    // ---- Connection helpers (run on app task via update()) ----
-    void connectDirect() {
-        lastAttemptMs_ = millis();
-        doConnect(NimBLEAddress(storedAddr_, storedType_));
-    }
-
-    void doConnect(NimBLEAddress addr) {
-        client_ = NimBLEDevice::createClient();
-        client_->setClientCallbacks(this, false);
-
-        if (!client_->connect(addr)) {
-            NimBLEDevice::deleteClient(client_);
-            client_      = nullptr;
-            lastAttemptMs_ = millis();
-            return;
-        }
-
-        auto* svc = client_->getService("180d");
-        auto* chr = svc ? svc->getCharacteristic("2a37") : nullptr;
-        if (!chr || !chr->canNotify()) {
-            client_->disconnect();
-            return;
-        }
-
-        // Lambda capture: BleHrReader outlives all BLE objects so the pointer
-        // is valid for the session lifetime.
-        BleHrReader* self = this;
-        chr->subscribe(true,
-            [self](NimBLERemoteCharacteristic*, uint8_t* data, size_t len, bool) {
-                if (len < 2) return;
-                // BLE HRS wire format: flags byte, then HR as uint8 or uint16
-                self->hr_ = (data[0] & 0x01)
-                    ? (uint16_t)(data[1] | ((uint16_t)data[2] << 8))
-                    : data[1];
-            });
-
-        // Persist on first successful bond
-        if (!hasMac_) {
-            storedAddr_ = addr.toString();
-            storedType_ = (uint8_t)addr.getType();
-            prefs_->putString("strap_addr", String(storedAddr_.c_str()));
-            prefs_->putUChar("strap_atype", storedType_);
-            hasMac_ = true;
-            Serial.println("BLE HR strap bonded — auto-connects from now on");
-            Serial.println("Type 'strap-reset' if you ever need to pair a different strap");
-        }
+    void onConnect(NimBLEServer*) override {
+        clients_++;
         connected_ = true;
+        NimBLEDevice::getAdvertising()->start();  // stay visible for a second client
     }
-
-    void startScan() {
-        if (scanning_) return;
-        scanning_      = true;
-        lastAttemptMs_ = millis();
-        auto* scan = NimBLEDevice::getScan();
-        scan->setAdvertisedDeviceCallbacks(new ScanCB(this), true);
-        scan->setActiveScan(false);   // passive is enough to spot the HR service UUID
-        scan->start(SCAN_DURATION_S, [](NimBLEScanResults r) {
-            NimBLEDevice::getScan()->clearResults();
-        }, false);
+    void onDisconnect(NimBLEServer*) override {
+        if (clients_ > 0) clients_--;
+        connected_ = clients_ > 0;
     }
-
-    // Runs on NimBLE task: just record the address; connect on the app task.
-    struct ScanCB : NimBLEAdvertisedDeviceCallbacks {
-        BleHrReader* r;
-        explicit ScanCB(BleHrReader* rr) : r(rr) {}
-        void onResult(NimBLEAdvertisedDevice* dev) override {
-            if (!dev->isAdvertisingService(NimBLEUUID("180d"))) return;
-            NimBLEDevice::getScan()->stop();
-            r->foundAddress_ = dev->getAddress();
-            r->foundDevice_  = true;
-            r->scanning_     = false;
-        }
-    };
 };
 #endif // USE_BLE_HR
 
 // ---- Pin / config defaults (override with -D build flags if your wiring differs)
 #ifndef PIN_I2C_SDA
-#define PIN_I2C_SDA 21          // MAX30102 + MPU-6050 shared SDA
+#define PIN_I2C_SDA 21          // MPU-6050 SDA
 #endif
 #ifndef PIN_I2C_SCL
-#define PIN_I2C_SCL 22          // MAX30102 + MPU-6050 shared SCL
+#define PIN_I2C_SCL 22          // MPU-6050 SCL
+#endif
+// MAX30003 ECG — SPI. Defaults match a typical ESP32 DevKit layout.
+#ifndef PIN_ECG_CS
+#define PIN_ECG_CS   5
+#endif
+#ifndef PIN_ECG_INT
+#define PIN_ECG_INT  34
+#endif
+#ifndef PIN_ECG_FCLK
+#define PIN_ECG_FCLK 26         // ponytail: LEDC ~32768 Hz; use ext oscillator for tighter BPM
 #endif
 #ifndef PIN_GPS_RX
 #define PIN_GPS_RX 16           // ESP32 RX2  <- GPS TX
@@ -226,22 +126,32 @@ constexpr float MILE_METERS = 1609.344f;
 
 #if defined(USE_REAL_SENSORS)
 #include <Wire.h>
-#include <MAX30105.h>           // SparkFun MAX3010x library
-#include "heartRate.h"          // checkForBeat() helper from the same library
-#include <TinyGPS++.h>          // TinyGPSPlus
+#include <SPI.h>                // MAX30003 ECG
+#include <TinyGPS++.h>
 #include <Adafruit_MPU6050.h>
 #include <Adafruit_Sensor.h>
+
+// MAX30003 register map — 6-bit addresses; SPI frame: (reg<<1)|R/W then 3 data bytes MSB-first.
+// ponytail: config values from Protocentral MAX30003 reference implementation.
+namespace Ecg {
+    constexpr uint8_t SW_RST     = 0x08;
+    constexpr uint8_t SYNCH      = 0x09;
+    constexpr uint8_t EN_INT     = 0x02;
+    constexpr uint8_t CNFG_GEN   = 0x10;
+    constexpr uint8_t CNFG_ECG   = 0x15;
+    constexpr uint8_t CNFG_RTOR1 = 0x1D;
+    constexpr uint8_t CNFG_RTOR2 = 0x1E;
+    constexpr uint8_t RTOR       = 0x25;
+}
+
+static volatile bool ecgIntFired = false;
+static void IRAM_ATTR ecgIsr() { ecgIntFired = true; }
 #endif
 
 class AthleteSensors {
 public:
 #if defined(USE_BLE_HR)
-    // Call once from setup(), after Preferences::begin() and sensor begin().
-    void beginBle(Preferences& prefs) { ble_.begin(prefs); }
-
-    // Called from `strap-reset` serial command.
-    void resetBleStrap(Preferences& prefs) { ble_.resetPairing(prefs); }
-
+    void beginBle() { ble_.begin(); }
     String bleStatus() const { return ble_.statusString(); }
 #endif
 
@@ -250,17 +160,27 @@ public:
         bool ok = true;
         Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL);
 
-        // Heart rate (MAX30102)
-        if (hr_.begin(Wire, I2C_SPEED_FAST)) {
-            hr_.setup();                       // sane defaults for HR
-            hr_.setPulseAmplitudeRed(0x0A);    // low red LED (presence indicator)
-            hr_.setPulseAmplitudeIR(0x20);     // IR LED used for PPG
-            hr_.enableDIETEMPRDY();            // allow die-temperature reads
-            hrReady_ = true;
-        } else {
-            Serial.println("WARN: MAX30102 not found");
-            ok = false;
-        }
+        // ECG heart rate (MAX30003 via SPI)
+        // ponytail: LEDC generates ~32768 Hz FCLK; replace with ext oscillator for tighter BPM
+        ledcSetup(7, 32768, 1);
+        ledcAttachPin(PIN_ECG_FCLK, 7);
+        ledcWrite(7, 1);
+
+        SPI.begin();
+        pinMode(PIN_ECG_CS, OUTPUT);
+        digitalWrite(PIN_ECG_CS, HIGH);
+        pinMode(PIN_ECG_INT, INPUT_PULLUP);
+
+        ecgWrite(Ecg::SW_RST,     0x000000);
+        delay(100);
+        ecgWrite(Ecg::CNFG_GEN,   0x080004);   // EN_ECG
+        ecgWrite(Ecg::CNFG_ECG,   0x005000);   // 256 sps, 20 dB, 0.5 Hz HPF
+        ecgWrite(Ecg::CNFG_RTOR1, 0x3FC600);   // RTOR detection
+        ecgWrite(Ecg::CNFG_RTOR2, 0x202000);
+        ecgWrite(Ecg::EN_INT,     0x000401);   // RTOR interrupt on INT1
+        ecgWrite(Ecg::SYNCH,      0x000000);   // start ECG
+        attachInterrupt(digitalPinToInterrupt(PIN_ECG_INT), ecgIsr, FALLING);
+        Serial.println("MAX30003 ECG ready");
 
         // IMU (MPU-6050)
         if (mpu_.begin()) {
@@ -290,16 +210,13 @@ public:
     void update() {
 #if defined(USE_REAL_SENSORS)
         uint32_t now = millis();
-        updateHeartRate(now);
+        updateEcg();
         updateImu(now);
         updateGps(now);
         if (now - lastBatteryMs_ >= 5000) {
             lastBatteryMs_ = now;
             updateBattery();
         }
-#endif
-#if defined(USE_BLE_HR)
-        ble_.update();  // drives BLE reconnect state machine
 #endif
     }
 
@@ -312,12 +229,7 @@ public:
         fillSimulated(m);
 #endif
 #if defined(USE_BLE_HR)
-        // BLE chest strap overrides MAX30102 / simulated HR when connected.
-        // Falls back to whatever fillReal/fillSimulated set when strap is absent.
-        if (ble_.connected()) {
-            m.heart_rate_bpm = ble_.hr();
-            m.flags |= ATHLETE_FLAG_HEART_RATE_VALID;
-        }
+        ble_.notify(m.heart_rate_bpm);   // push ECG HR to paired Garmin / Coros / Apple Watch
 #endif
     }
 
@@ -343,7 +255,7 @@ public:
 
 private:
 #if defined(USE_BLE_HR)
-    BleHrReader ble_;
+    BleHrServer ble_;
 #endif
 
     uint32_t sessionStartMs_ = 0;
@@ -393,18 +305,12 @@ private:
 
 #if defined(USE_REAL_SENSORS)
     // -------- Real hardware back end --------
-    MAX30105 hr_;
     Adafruit_MPU6050 mpu_;
     TinyGPSPlus gps_;
-    bool hrReady_ = false, imuReady_ = false;
+    bool imuReady_ = false;
 
-    // Heart rate state
-    uint32_t lastBeatMs_ = 0;
-    float bpmRates_[4] = {0, 0, 0, 0};
-    uint8_t rateIndex_ = 0;
-    uint16_t beatAvg_ = 0;
-    float skinTempC_ = 0.0f;
-    uint32_t lastTempMs_ = 0;
+    // MAX30003 ECG heart rate (interrupt-driven, updated in updateEcg())
+    uint16_t bpmEcg_ = 0;
 
     // IMU / cadence state
     float accelHpf_ = 0.0f, accelPrev_ = 0.0f;
@@ -430,28 +336,39 @@ private:
     uint16_t batteryMv_ = 4000;
     uint32_t lastBatteryMs_ = 0;
 
-    void updateHeartRate(uint32_t now) {
-        if (!hrReady_) return;
-        long ir = hr_.getIR();
-        if (ir < 50000) {              // finger/skin not in contact
-            beatAvg_ = 0;
-            return;
-        }
-        if (checkForBeat(ir)) {
-            uint32_t delta = now - lastBeatMs_;
-            lastBeatMs_ = now;
-            float bpm = 60.0f / (delta / 1000.0f);
-            if (bpm > 30 && bpm < 230) {
-                bpmRates_[rateIndex_++ % 4] = bpm;
-                float sum = 0; uint8_t n = 0;
-                for (float r : bpmRates_) if (r > 0) { sum += r; n++; }
-                if (n) beatAvg_ = static_cast<uint16_t>(sum / n);
-            }
-        }
-        if (now - lastTempMs_ >= 3000) {
-            lastTempMs_ = now;
-            skinTempC_ = hr_.readTemperature();   // die temp ~ skin contact temp
-        }
+    void ecgWrite(uint8_t reg, uint32_t data) {
+        SPI.beginTransaction(SPISettings(4000000, MSBFIRST, SPI_MODE0));
+        digitalWrite(PIN_ECG_CS, LOW);
+        SPI.transfer(reg << 1);
+        SPI.transfer((data >> 16) & 0xFF);
+        SPI.transfer((data >>  8) & 0xFF);
+        SPI.transfer( data        & 0xFF);
+        digitalWrite(PIN_ECG_CS, HIGH);
+        SPI.endTransaction();
+    }
+
+    uint32_t ecgRead(uint8_t reg) {
+        SPI.beginTransaction(SPISettings(4000000, MSBFIRST, SPI_MODE0));
+        digitalWrite(PIN_ECG_CS, LOW);
+        SPI.transfer((reg << 1) | 0x01);
+        uint32_t d = ((uint32_t)SPI.transfer(0) << 16)
+                   | ((uint32_t)SPI.transfer(0) <<  8)
+                   |  (uint32_t)SPI.transfer(0);
+        digitalWrite(PIN_ECG_CS, HIGH);
+        SPI.endTransaction();
+        return d;
+    }
+
+    void updateEcg() {
+        if (!ecgIntFired) return;
+        ecgIntFired = false;
+        uint32_t rtor = ecgRead(Ecg::RTOR);
+        uint32_t val  = (rtor >> 10) & 0x3FFF;
+        if (val == 0) return;
+        // ponytail: assumes FCLK=32768 Hz and RTOR_WNDW=3 per CNFG_RTOR1=0x3FC600
+        // BPM = 60 * 32768 / (8 * val) = 245760 / val
+        uint16_t bpm = static_cast<uint16_t>(245760UL / val);
+        if (bpm >= 30 && bpm <= 250) bpmEcg_ = bpm;
     }
 
     void updateImu(uint32_t now) {
@@ -550,7 +467,7 @@ private:
     }
 
     void fillReal(AthleteMetricsPayload& m) {
-        m.heart_rate_bpm = beatAvg_;
+        m.heart_rate_bpm = bpmEcg_;
         m.pace_sec_per_mile = gpsSpeedMps_ > 0.4f
             ? static_cast<uint16_t>(min<float>(MILE_METERS / gpsSpeedMps_, 65000.0f)) : 0;
         m.current_split_sec = currentSplitSec_;
@@ -562,13 +479,13 @@ private:
         m.ground_contact_ms = 0;     // not measurable from a torso/wrist IMU (needs a foot pod)
         m.vertical_oscillation_cm = voscCm_;
         m.elevation_gain_m = static_cast<int16_t>(elevationGainM_);
-        m.skin_temp_c_x10 = static_cast<int16_t>(skinTempC_ * 10.0f);
+        m.skin_temp_c_x10 = 0;   // ponytail: add NTC thermistor if skin temp needed
         m.battery_mv = batteryMv_;
         m.signal_percent = 0;        // hub stamps this from the received RSSI
 
         uint16_t flags = 0;
         if (gpsFix_) flags |= ATHLETE_FLAG_GPS_LOCK;
-        if (beatAvg_ > 0) flags |= ATHLETE_FLAG_HEART_RATE_VALID;
+        if (bpmEcg_ > 0) flags |= ATHLETE_FLAG_HEART_RATE_VALID;
         if (splitJustMarked_) { flags |= ATHLETE_FLAG_SPLIT_MARKER; splitJustMarked_ = false; }
         if (forceSplit_) { flags |= ATHLETE_FLAG_SPLIT_MARKER; forceSplit_ = false; }
         if (batteryMv_ < 3600) flags |= ATHLETE_FLAG_LOW_BATTERY;
