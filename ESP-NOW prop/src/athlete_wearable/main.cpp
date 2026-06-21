@@ -34,7 +34,6 @@ uint8_t cache_index = 0;
 uint8_t sequence_number = 0;
 uint16_t sample_id = 0;
 uint32_t last_metric_time = 0;
-uint32_t last_gossip_time = 0;
 uint32_t last_discovery_time = 0;
 uint32_t last_peer_check = 0;
 
@@ -165,11 +164,9 @@ void handleAthleteMetrics(const uint8_t* mac, const ESPNowMessage& msg) {
         ESPNowUtils::sendMessage(mac, ack);
     }
 
-    uint32_t now = millis();
-    if (now - last_gossip_time >= GOSSIP_RETRY_INTERVAL_MS) {
-        gossipMessage(msg);
-        last_gossip_time = now;
-    }
+    // De-dup cache already prevents loops; forward every unique frame so no
+    // athlete's metrics are dropped at relay nodes in multi-athlete sessions.
+    gossipMessage(msg);
 }
 
 void handleCoachCommand(const ESPNowMessage& msg) {
