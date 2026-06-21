@@ -102,17 +102,14 @@ public:
         return count;
     }
 
-    // Check if peer is still alive (timeout).
-    bool checkPeerTimeout(uint32_t timeout_ms) {
+    // Mark peers that have not sent a frame within timeout_ms as inactive.
+    void checkPeerTimeout(uint32_t timeout_ms) {
         uint32_t current_time = millis();
         for (int i = 0; i < peer_count; i++) {
-            if (peers[i].is_active) {
-                if ((current_time - peers[i].last_seen) > timeout_ms) {
-                    peers[i].is_active = false;
-                }
+            if (peers[i].is_active && (current_time - peers[i].last_seen) > timeout_ms) {
+                peers[i].is_active = false;
             }
         }
-        return true;
     }
 
     PeerInfo* getActivePeerByIndex(uint8_t active_index) {
