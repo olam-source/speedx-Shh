@@ -19,18 +19,10 @@
 #define ATHLETE_TEAM_ID 1
 #endif
 
-struct GossipRecord {
-    uint8_t origin_id;
-    uint8_t sequence;
-    MessageType type;
-    uint32_t seen_at;
-};
-
 PeerManager peer_manager;
 AthleteSensors sensors;          // simulated, or real hardware with -DUSE_REAL_SENSORS
 Preferences prefs;               // NVS store for the runtime athlete id/team
-GossipRecord gossip_cache[GOSSIP_CACHE_SIZE] = {};
-uint8_t cache_index = 0;
+GossipCache gossip_cache;
 uint8_t sequence_number = 0;
 uint16_t sample_id = 0;
 uint32_t last_metric_time = 0;
@@ -38,7 +30,7 @@ uint32_t last_discovery_time = 0;
 uint32_t last_peer_check = 0;
 
 // Live identity, loaded from NVS at boot (falls back to the build-flag defaults).
-uint8_t g_athlete_id = ATHLETE_NODE_ID;
+node_id_t g_athlete_id = ATHLETE_NODE_ID;   // 16-bit; coach app shows it as hex
 uint8_t g_team_id = ATHLETE_TEAM_ID;
 
 // Session state, driven by coach commands relayed through the mesh.
@@ -51,21 +43,6 @@ bool ota_mode = false;
 // USB provisioning console.
 String serial_line;
 
-bool isCached(const ESPNowMessage& msg) {
-    for (uint8_t i = 0; i < GOSSIP_CACHE_SIZE; i++) {
-        if (gossip_cache[i].origin_id == msg.sender_id &&
-            gossip_cache[i].sequence == msg.sequence &&
-            gossip_cache[i].type == msg.type) {
-            return true;
-        }
-    }
-    return false;
-}
-
-void rememberMessage(const ESPNowMessage& msg) {
-    gossip_cache[cache_index] = {msg.sender_id, msg.sequence, msg.type, millis()};
-    cache_index = (cache_index + 1) % GOSSIP_CACHE_SIZE;
-}
 
 void onDataSent(const uint8_t* mac_addr, esp_now_send_status_t status) {
     Serial.printf("TX %s -> %s\n",
@@ -131,7 +108,7 @@ bool gossipMessage(ESPNowMessage msg) {
 void sendOwnMetrics() {
     AthleteMetricsPayload metrics = readAthleteMetrics();
     ESPNowMessage msg = ESPNowUtils::createAthleteMetricsMessage(g_athlete_id, sequence_number++, metrics);
-    rememberMessage(msg);
+    gossip_cache.remember(msg);
     bool queued = gossipMessage(msg);
 
     Serial.printf("Metric sample %u HR=%u pace=%u split=%u dist=%um gossip=%s\n",
@@ -212,10 +189,8 @@ void handleIncomingMessage(const uint8_t* mac, const ESPNowMessage& msg) {
     peer_manager.registerPeer(mac, msg.sender_id);
     peer_manager.updatePeerActivity(mac, static_cast<int8_t>(msg.rssi), msg.sequence);
 
-    if (msg.sender_id == g_athlete_id || isCached(msg)) {
-        return;
-    }
-    rememberMessage(msg);
+    if (msg.sender_id == g_athlete_id || gossip_cache.contains(msg)) return;
+    gossip_cache.remember(msg);
 
     switch (msg.type) {
         case MessageType::ATHLETE_METRICS:
@@ -256,7 +231,7 @@ void onDataReceived(const uint8_t* mac, const uint8_t* data, int data_len) {
 
 // ===== USB provisioning console =================================================
 // Lets you assign each wearable's identity at runtime, so one binary serves all:
-//   id <1-249>   set this athlete's node id (saved to NVS, then reboots)
+//   id <hex 1-FFFD>   set this athlete's node id (saved to NVS, then reboots)
 //   team <0-255> set this athlete's team
 //   info         print current id/team/MAC
 //   reset-id     clear stored id/team (revert to build-flag defaults)
@@ -278,9 +253,10 @@ void handleSerialCommand(String line) {
     arg.trim();
 
     if (verb == "id") {
-        long v = arg.toInt();
-        if (v < 1 || v > 249) { Serial.println("id must be 1-249 (250=hub, 255=broadcast are reserved)"); return; }
-        prefs.putUChar("id", static_cast<uint8_t>(v));
+        // IDs are hex (e.g. "1a2b" or "0x1A2B"). base 16 accepts an optional 0x.
+        long v = strtol(arg.c_str(), nullptr, 16);
+        if (v < 1 || v > NODE_ID_MAX) { Serial.println("id must be hex 1-FFFD (FFFE=hub, FFFF=broadcast are reserved)"); return; }
+        prefs.putUShort("nid", static_cast<node_id_t>(v));
         applyAndRestart("athlete id");
     } else if (verb == "team") {
         long v = arg.toInt();
@@ -290,12 +266,12 @@ void handleSerialCommand(String line) {
     } else if (verb == "info") {
         uint8_t mac[6];
         ESPNowUtils::getDeviceMac(mac);
-        Serial.printf("id=%u team=%u mac=%s uptime=%lus\n",
-                      g_athlete_id, g_team_id,
+        Serial.printf("id=0x%04X (%u) team=%u mac=%s uptime=%lus\n",
+                      g_athlete_id, g_athlete_id, g_team_id,
                       ESPNowUtils::macToString(mac).c_str(),
                       static_cast<unsigned long>(millis() / 1000));
     } else if (verb == "reset-id") {
-        prefs.remove("id");
+        prefs.remove("nid");
         prefs.remove("team");
         applyAndRestart("defaults");
     } else if (verb == "ota") {
@@ -306,7 +282,7 @@ void handleSerialCommand(String line) {
         Serial.println(sensors.bleStatus());
 #endif
     } else if (verb == "help") {
-        Serial.println("commands: id <1-249> | team <0-255> | info | ota | reset-id"
+        Serial.println("commands: id <hex 1-FFFD> | team <0-255> | info | ota | reset-id"
 #if defined(USE_BLE_HR)
                        " | ble"
 #endif
@@ -357,17 +333,17 @@ void setup() {
 
     // Load the runtime identity (NVS), falling back to the build-flag defaults.
     prefs.begin("speedx", false);
-    g_athlete_id = prefs.getUChar("id", ATHLETE_NODE_ID);
+    g_athlete_id = prefs.getUShort("nid", ATHLETE_NODE_ID);   // 16-bit id (key "nid")
     g_team_id = prefs.getUChar("team", ATHLETE_TEAM_ID);
     randomSeed(static_cast<uint32_t>(micros()) ^ g_athlete_id);
 
     Serial.println("\n\n=== Athlete Wearable Gossip Node ===");
-    Serial.printf("Athlete Node: %u | Team: %u | Coach Hub: %u | Channel: %u\n",
+    Serial.printf("Athlete Node: 0x%04X | Team: %u | Coach Hub: 0x%04X | Channel: %u\n",
                   g_athlete_id,
                   g_team_id,
                   COACH_HUB_NODE_ID,
                   ESPNOW_CHANNEL);
-    Serial.println("USB console: id <1-249> | team <0-255> | info | ota | reset-id | help");
+    Serial.println("USB console: id <hex 1-FFFD> | team <0-255> | info | ota | reset-id | help");
 
     setupWiFi();
     setupESPNow();

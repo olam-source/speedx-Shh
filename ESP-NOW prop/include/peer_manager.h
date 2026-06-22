@@ -33,7 +33,7 @@ public:
     }
 
     // Register a new peer or refresh an existing one.
-    bool registerPeer(const uint8_t* mac, uint8_t peer_id) {
+    bool registerPeer(const uint8_t* mac, node_id_t peer_id) {
         if (mac == nullptr) {
             return false;
         }
@@ -66,7 +66,7 @@ public:
     }
 
     // Get peer by ID.
-    PeerInfo* getPeerById(uint8_t peer_id) {
+    PeerInfo* getPeerById(node_id_t peer_id) {
         for (int i = 0; i < peer_count; i++) {
             if (peers[i].peer_id == peer_id && peers[i].is_active) {
                 return &peers[i];

@@ -8,6 +8,27 @@
 #include "espnow_config.h"
 #include "espnow_crypto.h"
 
+// Shared gossip de-duplication cache. Instantiate one per node; call
+// contains() before forwarding and remember() immediately after.
+struct GossipCache {
+    GossipRecord records[GOSSIP_CACHE_SIZE] = {};
+    uint8_t idx = 0;
+
+    bool contains(const ESPNowMessage& msg) const {
+        for (uint8_t i = 0; i < GOSSIP_CACHE_SIZE; i++) {
+            if (records[i].origin_id == msg.sender_id &&
+                records[i].sequence  == msg.sequence  &&
+                records[i].type      == msg.type) return true;
+        }
+        return false;
+    }
+
+    void remember(const ESPNowMessage& msg) {
+        records[idx] = { msg.sender_id, msg.sequence, msg.type, millis() };
+        idx = (idx + 1) % GOSSIP_CACHE_SIZE;
+    }
+};
+
 class ESPNowUtils {
 public:
     static const uint8_t* broadcastMac() {
@@ -203,7 +224,7 @@ public:
         }
     }
 
-    static ESPNowMessage createMessage(MessageType type, uint8_t sender_id, uint8_t receiver_id, uint8_t sequence) {
+    static ESPNowMessage createMessage(MessageType type, node_id_t sender_id, node_id_t receiver_id, uint8_t sequence) {
         ESPNowMessage msg{};
         msg.type = type;
         msg.sender_id = sender_id;
@@ -219,24 +240,24 @@ public:
     }
 
     // Create a ping message.
-    static ESPNowMessage createPingMessage(uint8_t sender_id, uint8_t receiver_id, uint8_t sequence) {
+    static ESPNowMessage createPingMessage(node_id_t sender_id, node_id_t receiver_id, uint8_t sequence) {
         ESPNowMessage msg = createMessage(MessageType::PING, sender_id, receiver_id, sequence);
         msg.flags = ESPNOW_FLAG_ACK_REQUESTED;
         return msg;
     }
 
-    static ESPNowMessage createPongMessage(uint8_t sender_id, uint8_t receiver_id, uint8_t sequence) {
+    static ESPNowMessage createPongMessage(node_id_t sender_id, node_id_t receiver_id, uint8_t sequence) {
         ESPNowMessage msg = createMessage(MessageType::PONG, sender_id, receiver_id, sequence);
         return msg;
     }
 
     // Create an ACK message.
-    static ESPNowMessage createAckMessage(uint8_t sender_id, uint8_t receiver_id, uint8_t ack_sequence) {
+    static ESPNowMessage createAckMessage(node_id_t sender_id, node_id_t receiver_id, uint8_t ack_sequence) {
         ESPNowMessage msg = createMessage(MessageType::ACK, sender_id, receiver_id, ack_sequence);
         return msg;
     }
 
-    static ESPNowMessage createAthleteMetricsMessage(uint8_t athlete_node_id, uint8_t sequence, const AthleteMetricsPayload& metrics) {
+    static ESPNowMessage createAthleteMetricsMessage(node_id_t athlete_node_id, uint8_t sequence, const AthleteMetricsPayload& metrics) {
         ESPNowMessage msg = createMessage(MessageType::ATHLETE_METRICS, athlete_node_id, COACH_HUB_NODE_ID, sequence);
         msg.flags = ESPNOW_FLAG_ACK_REQUESTED | ESPNOW_FLAG_GOSSIP;
         msg.ttl = ESPNOW_DEFAULT_TTL;
@@ -244,7 +265,7 @@ public:
         return msg;
     }
 
-    static ESPNowMessage createCoachCommandMessage(uint8_t sequence, CoachCommand command, uint8_t target_athlete, uint16_t param) {
+    static ESPNowMessage createCoachCommandMessage(uint8_t sequence, CoachCommand command, node_id_t target_athlete, uint16_t param) {
         CoachCommandPayload payload{};
         payload.command = static_cast<uint8_t>(command);
         payload.target_athlete = target_athlete;
@@ -267,7 +288,7 @@ public:
         return true;
     }
 
-    static ESPNowMessage createBeaconMessage(uint8_t sender_id, uint8_t sequence, uint8_t active_peer_count) {
+    static ESPNowMessage createBeaconMessage(node_id_t sender_id, uint8_t sequence, uint8_t active_peer_count) {
         uint8_t payload[2] = {1, active_peer_count};
         ESPNowMessage msg = createMessage(MessageType::MESH_BEACON, sender_id, ESPNOW_BROADCAST_ID, sequence);
         setPayload(msg, payload, sizeof(payload));

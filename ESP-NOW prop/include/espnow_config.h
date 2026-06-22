@@ -5,14 +5,21 @@
 #include <stddef.h>
 #include <cstring>
 
+// Logical node identifier. 16-bit gives ~65k addressable nodes (the coach app
+// shows these as hex). Widen to uint32_t here if a deployment ever needs more —
+// it's the single source of truth for the on-wire id width.
+// ponytail: uint16 covers any realistic team/league; bump to uint32 only if proven.
+using node_id_t = uint16_t;
+
 // ===== ESP-NOW Configuration =====
 constexpr uint8_t ESPNOW_CHANNEL = 1;
-constexpr uint8_t ESPNOW_BROADCAST_ID = 0xFF;
+constexpr node_id_t ESPNOW_BROADCAST_ID = 0xFFFF;   // reserved: "to everyone"
 constexpr uint8_t ESPNOW_DEFAULT_TTL = 4;
-constexpr uint8_t COACH_HUB_NODE_ID = 250;
+constexpr node_id_t COACH_HUB_NODE_ID = 0xFFFE;     // reserved: the hub
+constexpr node_id_t NODE_ID_MAX = 0xFFFD;           // highest assignable athlete id
 constexpr uint8_t ESPNOW_MAX_PEERS = 20;
 constexpr size_t ESPNOW_MAX_FRAME_SIZE = 250;
-constexpr size_t ESPNOW_HEADER_SIZE = 14;
+constexpr size_t ESPNOW_HEADER_SIZE = 16;
 constexpr size_t MAX_PAYLOAD_SIZE = ESPNOW_MAX_FRAME_SIZE - ESPNOW_HEADER_SIZE;
 constexpr uint32_t ESPNOW_DEFAULT_PEER_TIMEOUT_MS = 30000;
 constexpr uint32_t ESPNOW_DISCOVERY_INTERVAL_MS = 10000;
@@ -42,7 +49,7 @@ enum class CoachCommand : uint8_t {
     IDENTIFY = 5         // ask the wearable to flash/announce itself
 };
 
-constexpr uint8_t COACH_TARGET_ALL = 0xFF;
+constexpr node_id_t COACH_TARGET_ALL = 0xFFFF;
 
 // ===== Message Types =====
 enum class MessageType : uint8_t {
@@ -57,8 +64,8 @@ enum class MessageType : uint8_t {
 // ===== Message Structure =====
 struct __attribute__((packed)) ESPNowMessage {
     MessageType type;
-    uint8_t sender_id;
-    uint8_t receiver_id;
+    node_id_t sender_id;
+    node_id_t receiver_id;
     uint8_t sequence;
     uint32_t timestamp;
     uint8_t rssi;
@@ -75,7 +82,7 @@ static_assert(sizeof(ESPNowMessage) == ESPNOW_MAX_FRAME_SIZE,
               "ESP-NOW message must fit in one ESP-NOW v1 frame");
 
 struct __attribute__((packed)) AthleteMetricsPayload {
-    uint8_t athlete_id;
+    node_id_t athlete_id;
     uint8_t team_id;
     uint16_t sample_id;
     uint32_t uptime_ms;
@@ -101,19 +108,27 @@ static_assert(sizeof(AthleteMetricsPayload) <= MAX_PAYLOAD_SIZE,
               "Athlete metrics payload must fit in one ESP-NOW frame");
 
 struct __attribute__((packed)) CoachCommandPayload {
-    uint8_t command;          // CoachCommand value
-    uint8_t target_athlete;   // athlete_id, or COACH_TARGET_ALL for everyone
-    uint16_t param;           // optional command argument (e.g. lap number)
-    uint32_t issued_ms;       // hub uptime when the command was issued
+    uint8_t command;            // CoachCommand value
+    node_id_t target_athlete;   // athlete_id, or COACH_TARGET_ALL for everyone
+    uint16_t param;             // optional command argument (e.g. lap number)
+    uint32_t issued_ms;         // hub uptime when the command was issued
 };
 
 static_assert(sizeof(CoachCommandPayload) <= MAX_PAYLOAD_SIZE,
               "Coach command payload must fit in one ESP-NOW frame");
 
+// ===== Gossip de-duplication record =====
+struct GossipRecord {
+    node_id_t origin_id;
+    uint8_t sequence;
+    MessageType type;
+    uint32_t seen_at;
+};
+
 // ===== Peer Information Structure =====
 struct PeerInfo {
     uint8_t mac[6];
-    uint8_t peer_id;
+    node_id_t peer_id;
     int8_t rssi;
     uint32_t last_seen;
     uint16_t message_count;

@@ -27,7 +27,7 @@
 #define COACH_TEAM_ID 1
 #endif
 
-constexpr uint8_t NODE_ID = COACH_HUB_NODE_ID;
+constexpr node_id_t NODE_ID = COACH_HUB_NODE_ID;
 constexpr uint32_t BEACON_INTERVAL_MS = 5000;
 constexpr uint32_t ROSTER_PRINT_INTERVAL_MS = 5000;
 constexpr uint32_t PEER_CHECK_INTERVAL_MS = 5000;
@@ -37,22 +37,13 @@ constexpr uint8_t MAX_ATHLETES = 32;
 // ----- Roster: latest known state for each athlete --------------------------
 struct AthleteRecord {
     bool in_use;
-    uint8_t athlete_id;
+    node_id_t athlete_id;
     uint32_t last_update_ms;   // for active-athlete counting
-};
-
-// ----- Gossip de-duplication cache ------------------------------------------
-struct GossipRecord {
-    uint8_t origin_id;
-    uint8_t sequence;
-    MessageType type;
-    uint32_t seen_at;
 };
 
 PeerManager peer_manager;
 AthleteRecord roster[MAX_ATHLETES] = {};
-GossipRecord gossip_cache[GOSSIP_CACHE_SIZE] = {};
-uint8_t cache_index = 0;
+GossipCache gossip_cache;
 uint8_t sequence_number = 0;
 uint32_t last_beacon_time = 0;
 uint32_t last_roster_print = 0;
@@ -61,25 +52,8 @@ uint32_t last_peer_check = 0;
 // USB serial command buffer (host -> hub).
 String serial_line;
 
-// ===== Gossip cache =========================================================
-bool isCached(const ESPNowMessage& msg) {
-    for (uint8_t i = 0; i < GOSSIP_CACHE_SIZE; i++) {
-        if (gossip_cache[i].origin_id == msg.sender_id &&
-            gossip_cache[i].sequence == msg.sequence &&
-            gossip_cache[i].type == msg.type) {
-            return true;
-        }
-    }
-    return false;
-}
-
-void rememberMessage(const ESPNowMessage& msg) {
-    gossip_cache[cache_index] = {msg.sender_id, msg.sequence, msg.type, millis()};
-    cache_index = (cache_index + 1) % GOSSIP_CACHE_SIZE;
-}
-
 // ===== Roster ===============================================================
-AthleteRecord* findOrAllocateAthlete(uint8_t athlete_id) {
+AthleteRecord* findOrAllocateAthlete(node_id_t athlete_id) {
     AthleteRecord* free_slot = nullptr;
     for (uint8_t i = 0; i < MAX_ATHLETES; i++) {
         if (roster[i].in_use && roster[i].athlete_id == athlete_id) {
@@ -146,10 +120,8 @@ void handleIncomingMessage(const uint8_t* mac, const ESPNowMessage& msg) {
     peer_manager.registerPeer(mac, msg.sender_id);
     peer_manager.updatePeerActivity(mac, static_cast<int8_t>(msg.rssi), msg.sequence);
 
-    if (isCached(msg)) {
-        return;
-    }
-    rememberMessage(msg);
+    if (gossip_cache.contains(msg)) return;
+    gossip_cache.remember(msg);
 
     switch (msg.type) {
         case MessageType::ATHLETE_METRICS:
@@ -194,9 +166,9 @@ void sendBeacon() {
     ESPNowUtils::broadcastMessage(beacon);
 }
 
-void broadcastCoachCommand(CoachCommand command, uint8_t target, uint16_t param) {
+void broadcastCoachCommand(CoachCommand command, node_id_t target, uint16_t param) {
     ESPNowMessage msg = ESPNowUtils::createCoachCommandMessage(sequence_number++, command, target, param);
-    rememberMessage(msg);  // don't re-handle our own echo
+    gossip_cache.remember(msg);  // don't re-handle our own echo
     ESPNowUtils::broadcastMessage(msg);
     Serial.printf("{\"t\":\"cmd_sent\",\"command\":%u,\"target\":%u,\"param\":%u}\n",
                   static_cast<unsigned>(command), target, param);
@@ -205,8 +177,8 @@ void broadcastCoachCommand(CoachCommand command, uint8_t target, uint16_t param)
 // ===== Host -> hub command console ==========================================
 // Accepts simple verbs on the USB serial line, e.g.:
 //   start            stop            reset
-//   lap [number]     identify [athlete_id]
-//   cmd <num> <target> <param>      (raw form)
+//   lap [number]     identify [athlete_id in hex]
+//   cmd <num> <target-hex> <param>  (raw form)
 void handleSerialCommand(String line) {
     line.trim();
     if (line.length() == 0) {
@@ -229,19 +201,22 @@ void handleSerialCommand(String line) {
         broadcastCoachCommand(CoachCommand::MARK_LAP, COACH_TARGET_ALL,
                               static_cast<uint16_t>(rest.toInt()));
     } else if (verb == "identify") {
-        uint8_t target = rest.length() ? static_cast<uint8_t>(rest.toInt()) : COACH_TARGET_ALL;
+        // target athlete id is hex; bare "identify" targets everyone
+        node_id_t target = rest.length() ? static_cast<node_id_t>(strtol(rest.c_str(), nullptr, 16)) : COACH_TARGET_ALL;
         broadcastCoachCommand(CoachCommand::IDENTIFY, target, 0);
     } else if (verb == "cmd") {
-        // raw: cmd <command> <target> <param>
-        uint8_t parts[3] = {0, COACH_TARGET_ALL, 0};
-        for (uint8_t i = 0; i < 3 && rest.length(); i++) {
+        // raw: cmd <command:dec> <target:hex> <param:dec>
+        String toks[3]; uint8_t n = 0;
+        while (n < 3 && rest.length()) {
             int s = rest.indexOf(' ');
-            String tok = s < 0 ? rest : rest.substring(0, s);
-            parts[i] = static_cast<uint8_t>(tok.toInt());
+            toks[n++] = s < 0 ? rest : rest.substring(0, s);
             rest = s < 0 ? "" : rest.substring(s + 1);
             rest.trim();
         }
-        broadcastCoachCommand(static_cast<CoachCommand>(parts[0]), parts[1], parts[2]);
+        CoachCommand c = static_cast<CoachCommand>(toks[0].toInt());
+        node_id_t target = (n > 1 && toks[1].length()) ? static_cast<node_id_t>(strtol(toks[1].c_str(), nullptr, 16)) : COACH_TARGET_ALL;
+        uint16_t param = n > 2 ? static_cast<uint16_t>(toks[2].toInt()) : 0;
+        broadcastCoachCommand(c, target, param);
     } else {
         Serial.printf("{\"t\":\"warn\",\"msg\":\"unknown command\",\"got\":\"%s\"}\n", verb.c_str());
     }

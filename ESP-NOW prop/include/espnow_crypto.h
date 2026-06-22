@@ -73,7 +73,10 @@ public:
         uint8_t pt[MAX_PAYLOAD_SIZE];
         memcpy(pt, msg.payload, pt_len);
 
-        uint8_t aad[4] = {static_cast<uint8_t>(msg.type), msg.sender_id, msg.receiver_id, msg.sequence};
+        uint8_t aad[6] = {static_cast<uint8_t>(msg.type),
+                          static_cast<uint8_t>(msg.sender_id & 0xFF), static_cast<uint8_t>(msg.sender_id >> 8),
+                          static_cast<uint8_t>(msg.receiver_id & 0xFF), static_cast<uint8_t>(msg.receiver_id >> 8),
+                          msg.sequence};
         uint8_t ct[MAX_PAYLOAD_SIZE];
         uint8_t tag[TAG_LEN];
 
@@ -110,7 +113,10 @@ public:
         uint8_t tag[TAG_LEN];
         memcpy(tag, msg.payload + IV_LEN + pt_len, TAG_LEN);
 
-        uint8_t aad[4] = {static_cast<uint8_t>(msg.type), msg.sender_id, msg.receiver_id, msg.sequence};
+        uint8_t aad[6] = {static_cast<uint8_t>(msg.type),
+                          static_cast<uint8_t>(msg.sender_id & 0xFF), static_cast<uint8_t>(msg.sender_id >> 8),
+                          static_cast<uint8_t>(msg.receiver_id & 0xFF), static_cast<uint8_t>(msg.receiver_id >> 8),
+                          msg.sequence};
         uint8_t pt[MAX_PAYLOAD_SIZE];
 
         mbedtls_gcm_context g;
