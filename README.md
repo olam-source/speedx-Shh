@@ -8,10 +8,6 @@ frames hop between athletes until they reach a single **coach hub** (a USB
 ESP-NOW adapter) plugged into the coach's laptop, where every athlete's vitals
 appear on one live screen.
 
-> 📚 **New here? Start with the [Project Wiki](docs/README.md)** — a guided,
-> multi-page knowledge base (overview, architecture, protocol, code map,
-> sensors, hardware/budget, build/flash, manufacturing/roadmap). It also imports
-> straight into Notion (*Import → Markdown & CSV* on the `docs/` folder).
 
 ```
    (Athlete 11) <-> (Athlete 12) <-> (Athlete 13) <-> ...any number
