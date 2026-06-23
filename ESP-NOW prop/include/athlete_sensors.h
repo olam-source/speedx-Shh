@@ -295,15 +295,18 @@ private:
     TinyGPSPlus gps_;
     bool imuReady_ = false;
 
-    // MAX30102 optical HR state
+    // MAX30102 optical HR state (IMU-aided motion-artifact rejection)
     MAX30105 ppg_;
     uint16_t bpmPpg_         = 0;
     uint32_t ppgLastBeatMs_  = 0;
-    float    ppgRates_[4]    = {};
+    float    hrEstimate_     = 0.0f;   // smoothed, artifact-rejected HR
+    float    ppgRates_[8]    = {};     // recent beat-to-beat BPMs (median window)
+    uint8_t  ppgCount_       = 0;
     uint8_t  ppgIdx_         = 0;
 
     // IMU / cadence state
     float accelHpf_ = 0.0f, accelPrev_ = 0.0f;
+    float motionLevel_ = 0.0f;         // slow envelope of arm motion; gates HR beats
     bool stepArmed_ = true;
     uint32_t lastStepMs_ = 0;
     uint32_t stepCount_ = 0, windowStartSteps_ = 0;
@@ -326,25 +329,46 @@ private:
     uint16_t batteryMv_ = 4000;
     uint32_t lastBatteryMs_ = 0;
 
+    // Median of the recent beat window — robust to the odd artifact beat that a
+    // running average would smear into the reading.
+    float medianRate() {
+        float t[8]; uint8_t n = ppgCount_;
+        for (uint8_t i = 0; i < n; i++) t[i] = ppgRates_[i];
+        for (uint8_t i = 1; i < n; i++) {            // insertion sort, n <= 8
+            float k = t[i]; int j = i - 1;
+            while (j >= 0 && t[j] > k) { t[j + 1] = t[j]; j--; }
+            t[j + 1] = k;
+        }
+        return n ? ((n & 1) ? t[n / 2] : 0.5f * (t[n / 2 - 1] + t[n / 2])) : 0.0f;
+    }
+
     void updatePpg() {
         // SparkFun lib pulls the FIFO internally; getIR() returns the latest sample.
         long ir = ppg_.getIR();
         if (ir < 50000) {            // ponytail: no skin contact; tune per wrist/arm coupling
-            bpmPpg_ = 0;
+            bpmPpg_ = 0; hrEstimate_ = 0.0f; ppgCount_ = 0;
             return;
         }
-        if (checkForBeat(ir)) {
-            uint32_t now = millis();
-            uint32_t delta = now - ppgLastBeatMs_;
-            ppgLastBeatMs_ = now;
-            float bpm = 60000.0f / delta;
-            if (bpm >= 30.0f && bpm <= 230.0f) {
-                ppgRates_[ppgIdx_++ % 4] = bpm;
-                float sum = 0.0f; uint8_t n = 0;
-                for (float r : ppgRates_) if (r > 0.0f) { sum += r; n++; }
-                if (n) bpmPpg_ = static_cast<uint16_t>(sum / n);
-            }
-        }
+        if (!checkForBeat(ir)) return;
+        uint32_t now = millis();
+        uint32_t delta = now - ppgLastBeatMs_;
+        ppgLastBeatMs_ = now;
+        if (delta == 0) return;
+        float bpm = 60000.0f / delta;
+        if (bpm < 30.0f || bpm > 230.0f) return;     // physically impossible interval
+
+        // Motion-aware gate: this is the IMU earning its keep. While the arm is
+        // swinging hard, a "beat" that jumps far from the running estimate is
+        // almost certainly a footfall, not a pulse — so tighten the slew limit.
+        const float MOTION_GATE = 2.0f;              // ponytail: accelHpf units; tune on-arm
+        float maxJump = (motionLevel_ > MOTION_GATE) ? 12.0f : 30.0f;
+        if (hrEstimate_ > 0.0f && fabsf(bpm - hrEstimate_) > maxJump) return;
+
+        ppgRates_[ppgIdx_++ % 8] = bpm;
+        if (ppgCount_ < 8) ppgCount_++;
+        float med = medianRate();
+        hrEstimate_ = (hrEstimate_ == 0.0f) ? med : hrEstimate_ + (med - hrEstimate_) * 0.4f;
+        bpmPpg_ = static_cast<uint16_t>(hrEstimate_ + 0.5f);
     }
 
     void updateImu(uint32_t now) {
@@ -358,6 +382,7 @@ private:
                           a.acceleration.z * a.acceleration.z);
         accelHpf_ = 0.9f * (accelHpf_ + mag - accelPrev_);
         accelPrev_ = mag;
+        motionLevel_ += (fabsf(accelHpf_) - motionLevel_) * 0.05f;   // slow motion envelope for HR gating
 
         // Vertical oscillation estimate from vertical-accel peak-to-peak.
         float vert = a.acceleration.z - 9.81f;
