@@ -24,14 +24,11 @@ constexpr size_t MAX_PAYLOAD_SIZE = ESPNOW_MAX_FRAME_SIZE - ESPNOW_HEADER_SIZE;
 constexpr uint32_t ESPNOW_DEFAULT_PEER_TIMEOUT_MS = 30000;
 constexpr uint32_t ESPNOW_DISCOVERY_INTERVAL_MS = 10000;
 constexpr uint32_t ATHLETE_METRIC_INTERVAL_MS = 2000;
-constexpr uint32_t GOSSIP_RETRY_INTERVAL_MS = 750;
 constexpr uint8_t GOSSIP_FANOUT = 3;
-constexpr uint8_t GOSSIP_CACHE_SIZE = 32;
+constexpr uint8_t GOSSIP_CACHE_SIZE = 128;  // ~8s of de-dup memory at 30 athletes; must stay <=255 (uint8_t)
 
 constexpr uint8_t ESPNOW_FLAG_ACK_REQUESTED = 0x01;
-constexpr uint8_t ESPNOW_FLAG_FORWARDED = 0x02;
 constexpr uint8_t ESPNOW_FLAG_GOSSIP = 0x04;
-constexpr uint8_t ESPNOW_FLAG_URGENT = 0x08;
 
 constexpr uint16_t ATHLETE_FLAG_GPS_LOCK = 0x0001;
 constexpr uint16_t ATHLETE_FLAG_HEART_RATE_VALID = 0x0002;
@@ -99,6 +96,8 @@ struct __attribute__((packed)) AthleteMetricsPayload {
     int16_t elevation_gain_m;
     int16_t skin_temp_c_x10;
     uint16_t battery_mv;
+    int32_t lat_e7;          // latitude  * 1e7  (0 = no GPS fix)
+    int32_t lon_e7;          // longitude * 1e7  (0 = no GPS fix)
     int8_t signal_percent;
     uint8_t reserved;
     uint16_t flags;

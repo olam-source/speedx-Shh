@@ -23,7 +23,7 @@ struct ESPNowMessage {
     uint16_t data_length;  // actual payload bytes (variable-length send)
     uint8_t ttl;           // hop budget — decremented on each forward
     uint8_t hop_count;     // hops travelled so far
-    uint8_t flags;         // ACK_REQUESTED | FORWARDED | GOSSIP | URGENT
+    uint8_t flags;         // ACK_REQUESTED | GOSSIP
     uint8_t payload[236];  // typed payload (see below)
 };
 ```

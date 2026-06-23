@@ -273,7 +273,7 @@ public:
         payload.issued_ms = millis();
 
         ESPNowMessage msg = createMessage(MessageType::COACH_COMMAND, COACH_HUB_NODE_ID, ESPNOW_BROADCAST_ID, sequence);
-        msg.flags = ESPNOW_FLAG_GOSSIP | ESPNOW_FLAG_URGENT;
+        msg.flags = ESPNOW_FLAG_GOSSIP;
         msg.ttl = ESPNOW_DEFAULT_TTL;
         setPayload(msg, &payload, sizeof(payload));
         return msg;
@@ -311,15 +311,16 @@ public:
             "{\"t\":\"athlete\",\"id\":%u,\"team\":%u,\"sample\":%u,\"uptime_ms\":%lu,"
             "\"hr\":%u,\"pace_s\":%u,\"split_s\":%u,\"best_split_s\":%u,\"dist_m\":%u,"
             "\"speed_cms\":%u,\"cadence\":%u,\"stride_cm\":%u,\"gct_ms\":%u,\"vosc_cm\":%u,"
-            "\"elev_m\":%d,\"skin_c10\":%d,\"batt_mv\":%u,\"signal\":%d,\"flags\":%u,"
-            "\"hops\":%u,\"ttl\":%u}\n",
+            "\"elev_m\":%d,\"skin_c10\":%d,\"batt_mv\":%u,\"lat_e7\":%ld,\"lon_e7\":%ld,"
+            "\"signal\":%d,\"flags\":%u,\"hops\":%u,\"ttl\":%u}\n",
             m.athlete_id, m.team_id, m.sample_id,
             static_cast<unsigned long>(m.uptime_ms),
             m.heart_rate_bpm, m.pace_sec_per_mile, m.current_split_sec, m.best_split_sec,
             m.distance_m, m.speed_cm_s, m.cadence_spm, m.stride_length_cm,
             m.ground_contact_ms, m.vertical_oscillation_cm, m.elevation_gain_m,
-            m.skin_temp_c_x10, m.battery_mv, m.signal_percent, m.flags,
-            hop_count, ttl);
+            m.skin_temp_c_x10, m.battery_mv,
+            static_cast<long>(m.lat_e7), static_cast<long>(m.lon_e7),
+            m.signal_percent, m.flags, hop_count, ttl);
     }
 
     static void printMessageSummary(const ESPNowMessage& msg) {

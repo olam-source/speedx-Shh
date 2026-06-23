@@ -45,6 +45,7 @@ Pins are `#define`d with defaults and overridable by build flag
 |--------|--------|---------|
 | Heart rate | MAX30102 PPG + `checkForBeat()` rolling average | good at rest, noisier at hard effort |
 | Distance / pace / speed | GPS fixes + `distanceBetween()` | good outdoors with sky view |
+| Route / position (`lat_e7`, `lon_e7`) | raw GPS lat/lon ×1e7; dashboard draws the path | good outdoors; 0/0 when no fix |
 | Mile splits / best split | GPS distance crossing mile marks + timer | good |
 | Elevation gain | sum of positive GPS-altitude deltas | rough (GPS altitude is noisy) |
 | Cadence | IMU accel-magnitude peak detection | good |

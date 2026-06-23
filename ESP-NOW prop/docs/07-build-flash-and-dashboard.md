@@ -174,7 +174,8 @@ Grafana, a CSV logger):
 {"t":"athlete","id":11,"team":1,"sample":42,"uptime_ms":84000,"hr":154,
  "pace_s":362,"split_s":361,"best_split_s":349,"dist_m":336,"speed_cms":430,
  "cadence":176,"stride_cm":145,"gct_ms":0,"vosc_cm":9,"elev_m":1,
- "skin_c10":335,"batt_mv":3870,"signal":78,"flags":3,"hops":1,"ttl":3}
+ "skin_c10":335,"batt_mv":3870,"lat_e7":515558000,"lon_e7":-2796000,
+ "signal":78,"flags":3,"hops":1,"ttl":3}
 ```
 
 Plus periodic `{"t":"hub",...}` heartbeat lines (uptime, mesh peers, active

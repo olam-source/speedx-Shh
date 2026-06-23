@@ -77,7 +77,7 @@ bool gossipMessage(ESPNowMessage msg) {
 
     msg.ttl--;
     msg.hop_count++;
-    msg.flags |= ESPNOW_FLAG_FORWARDED | ESPNOW_FLAG_GOSSIP;
+    msg.flags |= ESPNOW_FLAG_GOSSIP;
 
     PeerInfo* hub = peer_manager.getPeerById(COACH_HUB_NODE_ID);
     if (hub) {

@@ -25,69 +25,9 @@
 #include <Preferences.h>
 #include "espnow_config.h"
 
-// ============================================================================
-// BleHrServer — SpeedX IS the chest strap. Advertises standard BLE Heart Rate
-// Service (0x180D) so any Garmin, Coros, Apple Watch, or Wahoo can pair to it
-// once in their sensor settings and auto-reconnect every session from then on.
-//
-// No external strap needed. HR comes from the onboard MAXM86161 optical sensor.
-// Multiple clients can connect simultaneously (e.g. coach's tablet + athlete's watch).
-// ============================================================================
 #if defined(USE_BLE_HR)
 #include <NimBLEDevice.h>
-
-class BleHrServer : public NimBLEServerCallbacks {
-public:
-    void begin() {
-        NimBLEDevice::init("SpeedX");
-        auto* srv = NimBLEDevice::createServer();
-        srv->setCallbacks(this);
-
-        auto* svc   = srv->createService("180d");
-        hrChar_     = svc->createCharacteristic("2a37",
-                          NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
-        auto* loc   = svc->createCharacteristic("2a38", NIMBLE_PROPERTY::READ);
-        uint8_t chest = 1;
-        loc->setValue(&chest, 1);   // body sensor location: chest
-        svc->start();
-
-        NimBLEDevice::getAdvertising()->addServiceUUID("180d");
-        NimBLEDevice::getAdvertising()->start();
-    }
-
-    // Push a new HR value to all connected watches/apps.
-    void notify(uint16_t bpm) {
-        if (!connected_ || !hrChar_) return;
-        uint8_t data[2] = {0x00, (uint8_t)min<uint16_t>(bpm, 255)};
-        hrChar_->setValue(data, 2);
-        hrChar_->notify();
-    }
-
-    bool    connected()   const { return connected_; }
-    uint8_t clientCount() const { return clients_; }
-
-    String statusString() const {
-        return connected_
-            ? "BLE HR: " + String(clients_) + " client(s) connected"
-            : "BLE HR: advertising as 'SpeedX' — pair in watch sensor settings";
-    }
-
-private:
-    NimBLECharacteristic* hrChar_ = nullptr;
-    volatile bool    connected_ = false;
-    volatile uint8_t clients_   = 0;
-
-    void onConnect(NimBLEServer*) override {
-        clients_++;
-        connected_ = true;
-        NimBLEDevice::getAdvertising()->start();  // stay visible for a second client
-    }
-    void onDisconnect(NimBLEServer*) override {
-        if (clients_ > 0) clients_--;
-        connected_ = clients_ > 0;
-    }
-};
-#endif // USE_BLE_HR
+#endif
 
 // ---- Pin / config defaults (override with -D build flags if your wiring differs)
 #ifndef PIN_I2C_SDA
@@ -138,11 +78,44 @@ namespace Ppg {
 }
 #endif
 
-class AthleteSensors {
+// SpeedX armband IS the BLE HR sensor — advertises standard Heart Rate Service
+// (0x180D) so Garmin/Coros/Apple Watch pair once and auto-reconnect each session.
+// BLE server callbacks live directly on AthleteSensors when USE_BLE_HR is set.
+class AthleteSensors
+#if defined(USE_BLE_HR)
+    : public NimBLEServerCallbacks
+#endif
+{
 public:
 #if defined(USE_BLE_HR)
-    void beginBle() { ble_.begin(); }
-    String bleStatus() const { return ble_.statusString(); }
+    void beginBle() {
+        NimBLEDevice::init("SpeedX");
+        auto* srv = NimBLEDevice::createServer();
+        srv->setCallbacks(this);
+        auto* svc   = srv->createService("180d");
+        bleHrChar_  = svc->createCharacteristic("2a37",
+                          NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
+        auto* loc   = svc->createCharacteristic("2a38", NIMBLE_PROPERTY::READ);
+        uint8_t wrist = 2;   // body sensor location: wrist
+        loc->setValue(&wrist, 1);
+        svc->start();
+
+        // Running Speed & Cadence service (0x1814): the wearable also presents
+        // as a "footpod" so watches pick up pace, cadence and distance.
+        auto* rsc   = srv->createService("1814");
+        bleRscChar_ = rsc->createCharacteristic("2a53",
+                          NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
+        rsc->start();
+
+        NimBLEDevice::getAdvertising()->addServiceUUID("180d");
+        NimBLEDevice::getAdvertising()->addServiceUUID("1814");
+        NimBLEDevice::getAdvertising()->start();
+    }
+    String bleStatus() const {
+        return bleConnected_
+            ? "BLE HR: " + String(bleClients_) + " client(s) connected"
+            : "BLE HR: advertising as 'SpeedX' — pair in watch sensor settings";
+    }
 #endif
 
     bool begin() {
@@ -209,7 +182,8 @@ public:
         fillSimulated(m);
 #endif
 #if defined(USE_BLE_HR)
-        ble_.notify(m.heart_rate_bpm);   // push ECG HR to paired Garmin / Coros / Apple Watch
+        bleNotify(m.heart_rate_bpm);   // push HR to paired Garmin / Coros / Apple Watch
+        bleNotifyRsc(m);               // push pace / cadence / distance (footpod profile)
 #endif
     }
 
@@ -235,7 +209,45 @@ public:
 
 private:
 #if defined(USE_BLE_HR)
-    BleHrServer ble_;
+    NimBLECharacteristic* bleHrChar_  = nullptr;
+    NimBLECharacteristic* bleRscChar_ = nullptr;
+    volatile bool    bleConnected_   = false;
+    volatile uint8_t bleClients_     = 0;
+
+    void bleNotify(uint16_t bpm) {
+        if (!bleConnected_ || !bleHrChar_) return;
+        uint8_t data[2] = {0x00, (uint8_t)min<uint16_t>(bpm, 255)};
+        bleHrChar_->setValue(data, 2);
+        bleHrChar_->notify();
+    }
+
+    // RSC Measurement (0x2A53): flags, instantaneous speed (u16, 1/256 m/s),
+    // cadence (u8, steps/min), stride length (u16, 1/100 m), total distance
+    // (u32, 1/10 m). Watches read this as a footpod for pace/cadence/distance.
+    void bleNotifyRsc(const AthleteMetricsPayload& m) {
+        if (!bleConnected_ || !bleRscChar_) return;
+        uint8_t buf[10];
+        buf[0] = 0x07;   // bit0 stride present | bit1 distance present | bit2 running
+        uint16_t speed = static_cast<uint16_t>(m.speed_cm_s * 2.56f);   // cm/s -> (m/s)*256
+        buf[1] = speed & 0xFF; buf[2] = speed >> 8;
+        // ponytail: RSC cadence is steps/min; halve it here if a watch shows 2x (strides).
+        buf[3] = static_cast<uint8_t>(min<uint16_t>(m.cadence_spm, 255));
+        uint16_t stride = m.stride_length_cm;                           // already 1/100 m
+        buf[4] = stride & 0xFF; buf[5] = stride >> 8;
+        uint32_t dist = static_cast<uint32_t>(m.distance_m) * 10u;      // m -> 1/10 m
+        buf[6] = dist & 0xFF; buf[7] = (dist >> 8) & 0xFF;
+        buf[8] = (dist >> 16) & 0xFF; buf[9] = (dist >> 24) & 0xFF;
+        bleRscChar_->setValue(buf, sizeof(buf));
+        bleRscChar_->notify();
+    }
+    void onConnect(NimBLEServer*) override {
+        bleClients_++; bleConnected_ = true;
+        NimBLEDevice::getAdvertising()->start();
+    }
+    void onDisconnect(NimBLEServer*) override {
+        if (bleClients_ > 0) bleClients_--;
+        bleConnected_ = bleClients_ > 0;
+    }
 #endif
 
     uint32_t sessionStartMs_ = 0;
@@ -266,6 +278,15 @@ private:
         m.elevation_gain_m = static_cast<int16_t>(random(-2, 5));
         m.skin_temp_c_x10 = static_cast<int16_t>(335 + random(-8, 9));
         m.battery_mv = static_cast<uint16_t>(3900 - min<uint32_t>(now / 60000UL, 500UL));
+
+        // Simulated GPS: trace a ~400m oval (≈90s/lap) so the dashboard route
+        // map has something to draw on the bench. Each athlete is phase-offset.
+        const double base_lat = 51.5558, base_lon = -0.2796;   // a real running track
+        double ang = (session_ms / 90000.0) * TWO_PI + (m.athlete_id % 12) * 0.52;
+        double rlat = 50.0 / 111320.0;                          // ~100m N-S
+        double rlon = 80.0 / (111320.0 * cos(base_lat * PI / 180.0));  // ~160m E-W
+        m.lat_e7 = static_cast<int32_t>((base_lat + rlat * sin(ang)) * 1e7);
+        m.lon_e7 = static_cast<int32_t>((base_lon + rlon * cos(ang)) * 1e7);
         m.signal_percent = 0;
 
         uint16_t flags = ATHLETE_FLAG_GPS_LOCK | ATHLETE_FLAG_HEART_RATE_VALID;
@@ -495,6 +516,8 @@ private:
         m.elevation_gain_m = static_cast<int16_t>(elevationGainM_);
         m.skin_temp_c_x10 = 0;   // ponytail: add NTC thermistor if skin temp needed
         m.battery_mv = batteryMv_;
+        m.lat_e7 = gpsFix_ ? static_cast<int32_t>(lastLat_ * 1e7) : 0;
+        m.lon_e7 = gpsFix_ ? static_cast<int32_t>(lastLng_ * 1e7) : 0;
         m.signal_percent = 0;        // hub stamps this from the received RSSI
 
         uint16_t flags = 0;
