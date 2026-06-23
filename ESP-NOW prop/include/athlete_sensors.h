@@ -9,9 +9,9 @@
 //   * default (no flag) -> simulated metrics, so the mesh/dashboard can be
 //     tested on a bare ESP32 with no sensors attached.
 //   * -DUSE_REAL_SENSORS -> reads real hardware:
-//        MAXM86161 optical HR sensor — green LED PPG, I2C, wristband/armband form factor
+//        MAX30102 optical HR sensor — IR PPG, I2C (0x57), wristband/armband form factor
 //        MPU-6050  6-axis IMU for cadence/stride/dynamics (I2C)
-//        u-blox NEO-M8N (or NEO-6M) GPS for distance/pace/splits (UART2)
+//        u-blox NEO-6M (or NEO-M8N) GPS for distance/pace/splits (UART2)
 //        battery   ADC voltage divider (e.g. LOLIN D32 onboard, GPIO35)
 //
 // main.cpp always calls the same three things:
@@ -31,10 +31,10 @@
 
 // ---- Pin / config defaults (override with -D build flags if your wiring differs)
 #ifndef PIN_I2C_SDA
-#define PIN_I2C_SDA 21          // MAXM86161 + MPU-6050 shared SDA
+#define PIN_I2C_SDA 21          // MAX30102 + MPU-6050 shared SDA
 #endif
 #ifndef PIN_I2C_SCL
-#define PIN_I2C_SCL 22          // MAXM86161 + MPU-6050 shared SCL
+#define PIN_I2C_SCL 22          // MAX30102 + MPU-6050 shared SCL
 #endif
 #ifndef PIN_GPS_RX
 #define PIN_GPS_RX 16           // ESP32 RX2  <- GPS TX
@@ -59,23 +59,8 @@ constexpr float MILE_METERS = 1609.344f;
 #include <TinyGPS++.h>
 #include <Adafruit_MPU6050.h>
 #include <Adafruit_Sensor.h>
-
-// MAXM86161 I2C register map (7-bit address 0x62).
-// ponytail: green LED only — best for wrist/armband; add IR slot if SpO2 needed later.
-namespace Ppg {
-    constexpr uint8_t ADDR     = 0x62;
-    constexpr uint8_t INT_EN1  = 0x02;
-    constexpr uint8_t FIFO_WR  = 0x04;
-    constexpr uint8_t FIFO_RD  = 0x06;
-    constexpr uint8_t FIFO_DAT = 0x07;
-    constexpr uint8_t FIFO_CF1 = 0x08;
-    constexpr uint8_t FIFO_CF2 = 0x09;
-    constexpr uint8_t SYS_CTRL = 0x0A;
-    constexpr uint8_t PPG_CF1  = 0x0B;   // [7:5] sample rate, [4:3] ADC range
-    constexpr uint8_t PPG_CF2  = 0x0C;   // [7:6] LED range, [3:0] pulse width
-    constexpr uint8_t LED_SEQ1 = 0x12;   // [3:0] slot1 LED: 0=off, 1=green, 2=IR, 3=red
-    constexpr uint8_t LED1_PA  = 0x23;   // green pulse amplitude (0x00–0xFF, LSB=0.12mA)
-}
+#include <MAX30105.h>      // SparkFun MAX3010x lib — drives the MAX30102 (addr 0x57)
+#include "heartRate.h"     // checkForBeat() beat detector
 #endif
 
 // SpeedX armband IS the BLE HR sensor — advertises standard Heart Rate Service
@@ -123,17 +108,17 @@ public:
         bool ok = true;
         Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL);
 
-        // MAXM86161 optical HR (I2C, green LED, wristband/armband)
-        ppgWrite(Ppg::SYS_CTRL,  0x01);         // software reset
-        delay(100);
-        ppgWrite(Ppg::FIFO_CF1,  0x0F);         // no averaging, A_FULL at 15 samples
-        ppgWrite(Ppg::FIFO_CF2,  0x02);         // clear FIFO stat pointer on read
-        ppgWrite(Ppg::PPG_CF1,   0x50);         // ponytail: 100 sps, ADC 16384nA; drop to 0x00 if saturation
-        ppgWrite(Ppg::PPG_CF2,   0x00);         // LED range 31mA, shortest pulse width
-        ppgWrite(Ppg::LED_SEQ1,  0x01);         // slot 1 = LED1 (green)
-        ppgWrite(Ppg::LED1_PA,   0x20);         // ponytail: ~3.84mA; raise to 0x40 if signal is weak
-        ppgWrite(Ppg::INT_EN1,   0x80);         // enable A_FULL interrupt
-        Serial.println("MAXM86161 optical HR ready");
+        // MAX30102 optical HR (I2C 0x57, IR PPG, wristband/armband)
+        if (ppg_.begin(Wire, I2C_SPEED_FAST)) {
+            ppg_.setup();                       // SparkFun defaults: 50mA, 411us, 4-avg
+            ppg_.setPulseAmplitudeRed(0x0A);    // dim red — IR drives beat detection
+            ppg_.setPulseAmplitudeIR(0x24);     // ponytail: ~7mA IR; raise if signal is weak
+            ppg_.setPulseAmplitudeGreen(0);     // MAX30102 has no green LED
+            Serial.println("MAX30102 optical HR ready");
+        } else {
+            Serial.println("WARN: MAX30102 not found");
+            ok = false;
+        }
 
         // IMU (MPU-6050)
         if (mpu_.begin()) {
@@ -310,12 +295,9 @@ private:
     TinyGPSPlus gps_;
     bool imuReady_ = false;
 
-    // MAXM86161 optical HR state
+    // MAX30102 optical HR state
+    MAX30105 ppg_;
     uint16_t bpmPpg_         = 0;
-    float    ppgBaseline_    = 0.0f;
-    float    ppgPeak_        = 0.0f;
-    float    ppgValley_      = 0.0f;
-    bool     ppgArmed_       = true;
     uint32_t ppgLastBeatMs_  = 0;
     float    ppgRates_[4]    = {};
     uint8_t  ppgIdx_         = 0;
@@ -344,36 +326,17 @@ private:
     uint16_t batteryMv_ = 4000;
     uint32_t lastBatteryMs_ = 0;
 
-    void ppgWrite(uint8_t reg, uint8_t val) {
-        Wire.beginTransmission(Ppg::ADDR);
-        Wire.write(reg); Wire.write(val);
-        Wire.endTransmission();
-    }
-
-    uint8_t ppgRead(uint8_t reg) {
-        Wire.beginTransmission(Ppg::ADDR);
-        Wire.write(reg);
-        Wire.endTransmission(false);
-        Wire.requestFrom(Ppg::ADDR, (uint8_t)1);
-        return Wire.available() ? Wire.read() : 0;
-    }
-
-    void detectBeat(uint32_t sample, uint32_t now) {
-        // DC baseline removal (slow IIR, ~2s time constant at 100 sps)
-        ppgBaseline_ += (static_cast<float>(sample) - ppgBaseline_) * 0.02f;
-        float sig = static_cast<float>(sample) - ppgBaseline_;
-
-        // Auto-scale peak/valley to handle varying skin tone and LED coupling
-        if (sig > ppgPeak_)   ppgPeak_   = sig; else ppgPeak_   *= 0.998f;
-        if (sig < ppgValley_) ppgValley_ = sig; else ppgValley_ *= 0.998f;
-        float amp = ppgPeak_ - ppgValley_;
-        if (amp < 300) return;   // ponytail: no contact or too much motion noise; tune 300 per skin tone
-
-        bool above = sig > ppgValley_ + amp * 0.5f;
-        if (above && ppgArmed_ && (now - ppgLastBeatMs_) > 300) {
+    void updatePpg() {
+        // SparkFun lib pulls the FIFO internally; getIR() returns the latest sample.
+        long ir = ppg_.getIR();
+        if (ir < 50000) {            // ponytail: no skin contact; tune per wrist/arm coupling
+            bpmPpg_ = 0;
+            return;
+        }
+        if (checkForBeat(ir)) {
+            uint32_t now = millis();
             uint32_t delta = now - ppgLastBeatMs_;
             ppgLastBeatMs_ = now;
-            ppgArmed_ = false;
             float bpm = 60000.0f / delta;
             if (bpm >= 30.0f && bpm <= 230.0f) {
                 ppgRates_[ppgIdx_++ % 4] = bpm;
@@ -381,28 +344,6 @@ private:
                 for (float r : ppgRates_) if (r > 0.0f) { sum += r; n++; }
                 if (n) bpmPpg_ = static_cast<uint16_t>(sum / n);
             }
-        } else if (!above) {
-            ppgArmed_ = true;
-        }
-    }
-
-    void updatePpg() {
-        uint8_t wr    = ppgRead(Ppg::FIFO_WR);
-        uint8_t rd    = ppgRead(Ppg::FIFO_RD);
-        uint8_t avail = (wr - rd) & 0x1F;     // FIFO is 32 samples deep
-        uint32_t now  = millis();
-        while (avail-- > 0) {
-            Wire.beginTransmission(Ppg::ADDR);
-            Wire.write(Ppg::FIFO_DAT);
-            Wire.endTransmission(false);
-            Wire.requestFrom(Ppg::ADDR, (uint8_t)3);
-            if (Wire.available() < 3) break;
-            uint32_t raw = ((uint32_t)Wire.read() << 16)
-                         | ((uint32_t)Wire.read() <<  8)
-                         |  (uint32_t)Wire.read();
-            // MAXM86161 FIFO: bits [2:0] = LED tag (1=green,2=IR,3=red), [23:3] = 19-bit sample
-            if ((raw & 0x07) != 1) continue;   // keep only green channel
-            detectBeat(raw >> 3, now);
         }
     }
 

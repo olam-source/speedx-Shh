@@ -22,15 +22,15 @@ it — you only need to add the sensors.
 | MCU + battery mgmt | **LOLIN D32** (ESP32 + onboard LiPo charger + battery ADC on GPIO35) | One board does compute, charging, and battery sensing — fewer parts to wire | $6–9 |
 | Heart rate | **MAX30102** optical PPG module (I2C) | Cheapest buildable HR; reads via SparkFun MAX3010x lib | $2–4 |
 | Motion / cadence | **MPU-6050** 6-axis IMU (I2C) | Cadence, stride estimate, vertical oscillation | $1–3 |
-| GPS | **u-blox NEO-M8N** w/ active antenna (UART) | Distance, pace, mile splits; up to 10 Hz fixes | $12–18 |
-| Battery | **18650 Li-ion** (3.7 V, 2000–3500 mAh) or 1S LiPo 500–1000 mAh | Powers the wearable for hours | $3–6 |
+| GPS | **u-blox NEO-6M** w/ antenna (UART) | Distance, pace, mile splits; 1 Hz fixes | $6–9 |
+| Battery | **1S LiPo** (3.7 V, 500–1000 mAh) or 18650 Li-ion | Powers the wearable for hours | $3–6 |
 | Strap / case | Velcro armband or 3D-printed clip + elastic | Mount on upper arm or waistband | $1–5 |
 
 **Wearable subtotal: ~$25–45** depending on GPS choice and battery.
 
-### Budget swap
-- Replace NEO-M8N with **NEO-6M** (~$8). Works, but 1 Hz fixes → coarser pace and
-  split timing. Set `-DGPS_BAUD=9600` (default).
+### Options
+- **Upgrade to NEO-M8N** (~$15) for 10 Hz fixes → finer pace and split timing.
+  Same wiring and `-DGPS_BAUD=9600` (default); no firmware change.
 - Replace the LOLIN D32 with a plain **ESP32 DevKit V1** (~$5) plus a **TP4056
   USB-C charger** (~$1) and a 2×100 kΩ divider on a spare ADC pin for battery
   sensing (set `-DPIN_BATTERY_ADC=<pin>`).
@@ -112,7 +112,7 @@ its ports, and flash. The `lib_deps` are fetched by PlatformIO on first build.
 | Metric | Source | Quality |
 |--------|--------|---------|
 | Heart rate | MAX30102 PPG + beat detection | good at rest, noisier at hard effort |
-| Distance / pace / speed | NEO-M8N GPS | good outdoors with sky view |
+| Distance / pace / speed | NEO-6M GPS | good outdoors with sky view |
 | Mile splits / best split | derived from GPS distance + timer | good |
 | Elevation gain | GPS altitude deltas | rough (GPS altitude is noisy) |
 | Cadence | IMU step detection | good |

@@ -21,7 +21,7 @@ part = "all";           // "body" | "lid" | "both" | "pad" | "footpod" | "all"
      18650       65 x 18 dia      (or 1S LiPo 503450 = 50x34x5 -> height 16) */
 inner_length = 70;      // along arm  (fits an 18650 end-to-end + clearance)
 inner_width  = 46;
-inner_height = 22;      // 18650 layout; drop to ~16 with a flat LiPo
+inner_height = 16;      // flat 1S LiPo (e.g. 503450); use 22 for an 18650
 
 wall    = 2.0;
 floor_t = 2.0;          // base thickness under the cavity

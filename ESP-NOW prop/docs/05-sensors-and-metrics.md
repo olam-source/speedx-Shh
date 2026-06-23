@@ -32,7 +32,7 @@ system in simulation, then flip one flag for hardware.
 |--------|-----------|----------|
 | **MAX30102** | I2C (`0x57`) | Heart rate (PPG beat detection), skin temperature |
 | **MPU-6050** | I2C (`0x68`) | Cadence (step detection), stride estimate, vertical oscillation |
-| **u-blox NEO-M8N / 6M** | UART2 | Distance, pace, speed, mile splits, elevation |
+| **u-blox NEO-6M / M8N** | UART2 | Distance, pace, speed, mile splits, elevation |
 | **Battery** | ADC (GPIO35) | Pack voltage via divider |
 
 Pins are `#define`d with defaults and overridable by build flag

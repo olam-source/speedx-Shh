@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SpeedX Wearable — Wiring &amp; Assembly Guide</title>
+<style>
+  :root { --ink:#111; --mut:#555; --line:#bbb; --hl:#f4f4f4; --warn:#a8410a; }
+  * { box-sizing: border-box; }
+  body { font: 14px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif; color: var(--ink);
+         max-width: 820px; margin: 28px auto; padding: 0 22px; }
+  h1 { font-size: 26px; margin: 0 0 2px; }
+  h2 { font-size: 17px; margin: 26px 0 8px; border-bottom: 2px solid var(--ink); padding-bottom: 3px; }
+  h3 { font-size: 14px; margin: 16px 0 4px; }
+  .sub { color: var(--mut); margin: 0 0 14px; }
+  table { border-collapse: collapse; width: 100%; margin: 8px 0 14px; font-size: 13px; }
+  th, td { border: 1px solid var(--line); padding: 5px 8px; text-align: left; vertical-align: top; }
+  th { background: var(--hl); }
+  code { background: var(--hl); padding: 1px 4px; border-radius: 3px; font-size: 12.5px; }
+  .box { border: 1px solid var(--line); border-left: 4px solid var(--ink); background: var(--hl);
+         padding: 10px 14px; margin: 12px 0; border-radius: 3px; }
+  .warn { border-left-color: var(--warn); }
+  .warn b { color: var(--warn); }
+  ol, ul { margin: 6px 0 12px; padding-left: 22px; }
+  li { margin: 3px 0; }
+  .pin { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-weight: 600; }
+  svg { width: 100%; height: auto; border: 1px solid var(--line); border-radius: 4px; margin: 8px 0; }
+  footer { color: var(--mut); font-size: 12px; margin-top: 30px; border-top: 1px solid var(--line); padding-top: 8px; }
+  @media print {
+    body { margin: 0; max-width: none; font-size: 11.5px; }
+    h2 { page-break-after: avoid; }
+    table, .box, svg { page-break-inside: avoid; }
+    a { color: inherit; text-decoration: none; }
+  }
+</style>
+</head>
+<body>
+
+<h1>SpeedX Wearable — Wiring &amp; Assembly Guide</h1>
+<p class="sub">Per-athlete armband node · LOLIN D32 (ESP32) · 3.3&nbsp;V logic · generated from the firmware in <code>include/athlete_sensors.h</code></p>
+
+<div class="box">
+  <b>Heart-rate sensor:</b> the firmware drives a <b>MAX30102</b> optical PPG module at I²C
+  address <code>0x57</code> (SparkFun MAX3010x library, IR LED for beat detection). The common
+  purple GY-MAX30102 / SparkFun breakouts all work. Mount the optical window flat against the
+  skin and keep the strap snug — contact quality matters more than any firmware tweak.
+</div>
+
+<h2>1. Quick facts</h2>
+<table>
+  <tr><th>Item</th><th>Value</th></tr>
+  <tr><td>Compute board</td><td>LOLIN D32 (ESP32, onboard LiPo charger + battery sense)</td></tr>
+  <tr><td>Logic level</td><td><b>3.3 V</b> — never feed 5 V into an ESP32 GPIO</td></tr>
+  <tr><td>I²C bus</td><td>shared by HR + IMU; SDA <span class="pin">GPIO21</span>, SCL <span class="pin">GPIO22</span>, ~100 kHz</td></tr>
+  <tr><td>GPS link</td><td>UART2, 9600 baud (NEO-6M/M8N default)</td></tr>
+  <tr><td>Common ground</td><td><b>Mandatory</b> — every module's GND ties to the ESP32 GND</td></tr>
+</table>
+
+<h2>2. Power &amp; safety</h2>
+<ul>
+  <li><b>Battery:</b> a single 18650 or 1S LiPo plugs into the LOLIN D32's JST battery connector. The board charges it over USB and regulates 3.3 V for everything else. <b>Observe polarity</b> — reversed LiPo can vent or catch fire.</li>
+  <li><b>Sensor power:</b> run MAX30102, MPU-6050, and the GPS from the board's <span class="pin">3V3</span> pin and <span class="pin">GND</span>. The NEO-6M also accepts 5&nbsp;V (use the board <span class="pin">VBUS/5V/USB</span> pin) if its module needs it — check your breakout's silkscreen; many NEO-6M boards have an onboard regulator and prefer 3.3–5 V.</li>
+  <li><b>Battery sense:</b> the LOLIN D32 already wires the cell to <span class="pin">GPIO35</span> through an onboard 100k/100k divider (<code>BATTERY_DIVIDER 2.0</code>). No external parts. On a plain ESP32 DevKit you must add that divider yourself.</li>
+  <li><b>Current:</b> the GPS draws the most (~25–35 mA with the antenna searching). The ESP32's 3.3 V regulator handles it, but don't also hang high-draw loads off the same rail.</li>
+</ul>
+
+<h2>3. Master pinout</h2>
+<table>
+  <tr><th>ESP32 pin</th><th>Connects to</th><th>Signal</th><th>Notes</th></tr>
+  <tr><td class="pin">GPIO21</td><td>MAX30102 SDA · MPU-6050 SDA</td><td>I²C SDA</td><td>shared bus</td></tr>
+  <tr><td class="pin">GPIO22</td><td>MAX30102 SCL · MPU-6050 SCL</td><td>I²C SCL</td><td>shared bus</td></tr>
+  <tr><td class="pin">GPIO16 (RX2)</td><td>GPS <b>TX</b></td><td>UART2 RX</td><td>data in from GPS</td></tr>
+  <tr><td class="pin">GPIO17 (TX2)</td><td>GPS <b>RX</b></td><td>UART2 TX</td><td>RX↔TX cross over</td></tr>
+  <tr><td class="pin">GPIO35</td><td>battery divider (onboard)</td><td>ADC battery</td><td>LOLIN D32 only</td></tr>
+  <tr><td class="pin">3V3</td><td>VCC of HR, IMU (and GPS if 3.3 V)</td><td>power</td><td>regulated 3.3 V</td></tr>
+  <tr><td class="pin">5V / VBUS</td><td>GPS VCC (if it needs 5 V)</td><td>power</td><td>USB-derived</td></tr>
+  <tr><td class="pin">GND</td><td>GND of <b>every</b> module</td><td>ground</td><td>common return</td></tr>
+</table>
+
+<h2>4. Connection diagram</h2>
+<svg viewBox="0 0 760 360" xmlns="http://www.w3.org/2000/svg" font-family="ui-monospace, Menlo, monospace" font-size="12">
+  <!-- ESP32 -->
+  <rect x="300" y="130" width="160" height="100" rx="6" fill="#f4f4f4" stroke="#111" stroke-width="1.5"/>
+  <text x="380" y="170" text-anchor="middle" font-weight="700">LOLIN D32</text>
+  <text x="380" y="188" text-anchor="middle" fill="#555">ESP32 · 3.3 V</text>
+  <text x="380" y="214" text-anchor="middle" fill="#555">+ LiPo charger</text>
+
+  <!-- MAX30102 -->
+  <rect x="40" y="40" width="170" height="70" rx="5" fill="#fff" stroke="#111"/>
+  <text x="125" y="64" text-anchor="middle" font-weight="700">MAX30102 HR</text>
+  <text x="125" y="82" text-anchor="middle" fill="#555">I²C 0x57 · skin side</text>
+  <text x="125" y="99" text-anchor="middle" fill="#555">SDA21 SCL22 3V3 GND</text>
+  <line x1="210" y1="90" x2="300" y2="150" stroke="#111"/>
+
+  <!-- MPU6050 -->
+  <rect x="40" y="250" width="170" height="70" rx="5" fill="#fff" stroke="#111"/>
+  <text x="125" y="274" text-anchor="middle" font-weight="700">MPU-6050 IMU</text>
+  <text x="125" y="292" text-anchor="middle" fill="#555">I²C 0x68</text>
+  <text x="125" y="309" text-anchor="middle" fill="#555">SDA21 SCL22 3V3 GND</text>
+  <line x1="210" y1="280" x2="300" y2="210" stroke="#111"/>
+
+  <!-- GPS -->
+  <rect x="550" y="40" width="170" height="80" rx="5" fill="#fff" stroke="#111"/>
+  <text x="635" y="64" text-anchor="middle" font-weight="700">NEO-6M GPS</text>
+  <text x="635" y="82" text-anchor="middle" fill="#555">UART2 · 9600</text>
+  <text x="635" y="99" text-anchor="middle" fill="#555">TX→16  RX←17</text>
+  <text x="635" y="114" text-anchor="middle" fill="#555">VCC GND · antenna up</text>
+  <line x1="550" y1="90" x2="460" y2="150" stroke="#111"/>
+
+  <!-- Battery -->
+  <rect x="550" y="250" width="170" height="70" rx="5" fill="#fff" stroke="#111"/>
+  <text x="635" y="274" text-anchor="middle" font-weight="700">18650 / 1S LiPo</text>
+  <text x="635" y="292" text-anchor="middle" fill="#555">JST → board</text>
+  <text x="635" y="309" text-anchor="middle" fill="#555">sense GPIO35</text>
+  <line x1="550" y1="280" x2="460" y2="210" stroke="#111"/>
+
+  <text x="380" y="330" text-anchor="middle" fill="#555">all GND common · I²C bus shared (0x57 ≠ 0x68, no conflict)</text>
+</svg>
+
+<h2>5. Module-by-module</h2>
+
+<h3>MAX30102 — optical heart rate (I²C 0x57)</h3>
+<table>
+  <tr><th>Module</th><th>ESP32</th></tr>
+  <tr><td>SDA</td><td class="pin">GPIO21</td></tr>
+  <tr><td>SCL</td><td class="pin">GPIO22</td></tr>
+  <tr><td>VCC / VIN</td><td class="pin">3V3</td></tr>
+  <tr><td>GND</td><td class="pin">GND</td></tr>
+</table>
+<p>Mount the optical window <b>against the skin</b> (the enclosure's sensor cut-out). Shield it from ambient light; a snug strap improves the signal far more than firmware tuning.</p>
+
+<h3>MPU-6050 — 6-axis IMU (I²C 0x68)</h3>
+<table>
+  <tr><th>Module</th><th>ESP32</th></tr>
+  <tr><td>SDA</td><td class="pin">GPIO21</td> </tr>
+  <tr><td>SCL</td><td class="pin">GPIO22</td></tr>
+  <tr><td>VCC</td><td class="pin">3V3</td></tr>
+  <tr><td>GND</td><td class="pin">GND</td></tr>
+</table>
+<p>Shares the I²C bus with the HR sensor — wire both SDA together and both SCL together. The addresses (0x57 vs 0x68) don't collide. Orient the board flat/consistent so cadence detection is stable.</p>
+
+<h3>NEO-6M — GPS (UART2, 9600 baud)</h3>
+<table>
+  <tr><th>GPS pin</th><th>ESP32</th><th>Note</th></tr>
+  <tr><td>TX</td><td class="pin">GPIO16 (RX2)</td><td>cross: GPS TX → ESP RX</td></tr>
+  <tr><td>RX</td><td class="pin">GPIO17 (TX2)</td><td>cross: GPS RX ← ESP TX</td></tr>
+  <tr><td>VCC</td><td class="pin">3V3 or 5V</td><td>per your module's regulator</td></tr>
+  <tr><td>GND</td><td class="pin">GND</td><td></td></tr>
+</table>
+<p><b>RX/TX always cross.</b> The ceramic patch antenna must face the sky (out the lid window), not the arm. First fix outdoors can take 30–90 s.</p>
+
+<h3>Battery</h3>
+<p>Plug the 18650/LiPo into the LOLIN D32 JST connector (mind polarity). Charging and 3.3 V regulation are automatic over USB. Voltage is sensed on <span class="pin">GPIO35</span> through the onboard divider.</p>
+
+<h2>6. Assembly order</h2>
+<ol>
+  <li><b>Bench-test first.</b> Flash the simulated build (<code>pio run -e athlete1 -t upload</code>) on a bare board — confirm it joins the mesh before adding sensors.</li>
+  <li>Solder the I²C pair (HR + IMU): SDA→21, SCL→22, both VCC→3V3, both GND→GND.</li>
+  <li>Power on, open the serial monitor. The firmware logs <code>MAX30102 optical HR ready</code> and the IMU init. If a device is missing, recheck SDA/SCL and 3.3 V.</li>
+  <li>Wire the GPS (remember RX↔TX cross). Take it outside; watch for a fix in the logs.</li>
+  <li>Plug in the battery last. Verify the battery % reads sanely on the dashboard.</li>
+  <li>Fit everything into the printed enclosure (<code>speedx_armband.scad</code>): HR window to skin, GPS antenna to the lid window, screw the lid.</li>
+</ol>
+
+<h2>7. Flash quick-reference</h2>
+<table>
+  <tr><th>Goal</th><th>Command</th></tr>
+  <tr><td>Bench test (no sensors)</td><td><code>pio run -e athlete1 -t upload</code></td></tr>
+  <tr><td>Real hardware wearable</td><td><code>pio run -e athlete1_hw -t upload</code></td></tr>
+  <tr><td>Coach hub (USB to laptop)</td><td><code>pio run -e coach_hub -t upload</code></td></tr>
+  <tr><td>Serial monitor</td><td><code>pio device monitor -b 115200</code></td></tr>
+</table>
+<p>Give each athlete a unique <code>ATHLETE_NODE_ID</code> (any hex 1–FFFD; FFFE/FFFF reserved) by copying the <code>[env:athlete1_hw]</code> block in <code>platformio.ini</code>.</p>
+
+<h2>8. Troubleshooting</h2>
+<table>
+  <tr><th>Symptom</th><th>Likely cause</th><th>Fix</th></tr>
+  <tr><td>No HR / sensor not found</td><td>swapped SDA/SCL, no 3.3 V, dead/clone module</td><td>confirm a MAX30102 (0x57) on the bus; re-check I²C wiring &amp; power</td></tr>
+  <tr><td>HR reads but noisy</td><td>loose strap, ambient light, hard effort</td><td>tighten strap; shroud the window</td></tr>
+  <tr><td>No GPS fix</td><td>RX/TX not crossed, antenna facing arm, indoors</td><td>swap 16/17; antenna to sky; go outside</td></tr>
+  <tr><td>IMU dead</td><td>address clash / bad solder</td><td>verify 0x68 on the bus; reflow joints</td></tr>
+  <tr><td>Battery % wrong</td><td>not a LOLIN D32 (no onboard divider)</td><td>add 100k/100k divider to an ADC pin; set <code>-DPIN_BATTERY_ADC</code></td></tr>
+  <tr><td>Won't join mesh</td><td>different ESP-NOW channel/key</td><td>all nodes share channel + <code>ESPNOW_ENCRYPT</code> key</td></tr>
+</table>
+
+<footer>
+  SpeedX wearable wiring guide · pins/addresses sourced from <code>include/athlete_sensors.h</code>.
+  Print: File → Print (or ⌘P) → Save as PDF. Verify against your exact breakout's silkscreen before powering on.
+</footer>
+
+</body>
+</html>
