@@ -5,6 +5,14 @@
 #include <stddef.h>
 #include <cstring>
 
+// Firmware semver — keep in sync with the coach app release (speedx-coach-app).
+#ifndef SPEEDX_FW_VERSION
+#define SPEEDX_FW_VERSION "0.8.35"
+#endif
+
+// How long without a fresh sample before an athlete is considered stale.
+constexpr uint32_t ATHLETE_STALE_MS = 15000;
+
 // Logical node identifier. 16-bit gives ~65k addressable nodes (the coach app
 // shows these as hex). Widen to uint32_t here only if a deployment ever needs
 // more; this type is the single source of truth for the on-wire id width.

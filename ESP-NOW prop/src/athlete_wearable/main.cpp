@@ -28,6 +28,7 @@ uint16_t sample_id = 0;
 uint32_t last_metric_time = 0;
 uint32_t last_discovery_time = 0;
 uint32_t last_peer_check = 0;
+uint8_t last_peer_count = 0;
 
 // Live identity, loaded from NVS at boot (falls back to the build-flag defaults).
 node_id_t g_athlete_id = ATHLETE_NODE_ID;   // 16-bit; coach app shows it as hex
@@ -45,9 +46,10 @@ String serial_line;
 
 
 void onDataSent(const uint8_t* mac_addr, esp_now_send_status_t status) {
-    Serial.printf("TX %s -> %s\n",
-                  ESPNowUtils::macToString(mac_addr).c_str(),
-                  status == ESP_NOW_SEND_SUCCESS ? "ok" : "failed");
+    if (status != ESP_NOW_SEND_SUCCESS) {
+        Serial.printf("{\"t\":\"tx\",\"to\":\"%s\",\"ok\":false}\n",
+                      ESPNowUtils::macToString(mac_addr).c_str());
+    }
 }
 
 AthleteMetricsPayload readAthleteMetrics() {
@@ -338,11 +340,9 @@ void setup() {
     randomSeed(static_cast<uint32_t>(micros()) ^ g_athlete_id);
 
     Serial.println("\n\n=== Athlete Wearable Gossip Node ===");
-    Serial.printf("Athlete Node: 0x%04X | Team: %u | Coach Hub: 0x%04X | Channel: %u\n",
-                  g_athlete_id,
-                  g_team_id,
-                  COACH_HUB_NODE_ID,
-                  ESPNOW_CHANNEL);
+    Serial.printf("{\"t\":\"boot\",\"role\":\"wearable\",\"node\":%u,\"team\":%u,\"fw\":\"%s\"}\n",
+                  g_athlete_id, g_team_id, SPEEDX_FW_VERSION);
+    Serial.printf("Coach Hub: 0x%04X | Channel: %u\n", COACH_HUB_NODE_ID, ESPNOW_CHANNEL);
     Serial.println("USB console: id <hex 1-FFFD> | team <0-255> | info | ota | reset-id | help");
 
     setupWiFi();
@@ -387,7 +387,11 @@ void loop() {
 
     if (now - last_peer_check >= 5000) {
         peer_manager.checkPeerTimeout(ESPNOW_DEFAULT_PEER_TIMEOUT_MS);
-        Serial.printf("Peers: %u\n", peer_manager.getActivePeerCount());
+        uint8_t peers = peer_manager.getActivePeerCount();
+        if (peers != last_peer_count) {
+            Serial.printf("{\"t\":\"peers\",\"count\":%u}\n", peers);
+            last_peer_count = peers;
+        }
         last_peer_check = now;
     }
 

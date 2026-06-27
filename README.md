@@ -22,6 +22,7 @@ the separate Electron coach app:
 
 ## Current state
 
+- **Firmware v0.8.35** — version emitted in boot JSON (`fw` field).
 - Simulation build runs on a bare ESP32.
 - Real-sensor build uses MAX30102, MPU-6050, GPS, and battery ADC.
 - Wearables can be assigned IDs at runtime over USB (`id <hex>`, `team <n>`).

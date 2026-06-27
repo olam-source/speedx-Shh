@@ -31,7 +31,6 @@ constexpr node_id_t NODE_ID = COACH_HUB_NODE_ID;
 constexpr uint32_t BEACON_INTERVAL_MS = 5000;
 constexpr uint32_t ROSTER_PRINT_INTERVAL_MS = 5000;
 constexpr uint32_t PEER_CHECK_INTERVAL_MS = 5000;
-constexpr uint32_t ATHLETE_STALE_MS = 15000;
 constexpr uint8_t MAX_ATHLETES = 32;
 
 // ----- Roster: latest known state for each athlete --------------------------
@@ -253,8 +252,8 @@ void setupWiFi() {
 
     uint8_t mac[6];
     ESPNowUtils::getDeviceMac(mac);
-    Serial.printf("{\"t\":\"boot\",\"role\":\"coach_hub\",\"node\":%u,\"mac\":\"%s\",\"channel\":%u}\n",
-                  NODE_ID, ESPNowUtils::macToString(mac).c_str(), ESPNOW_CHANNEL);
+    Serial.printf("{\"t\":\"boot\",\"role\":\"coach_hub\",\"node\":%u,\"mac\":\"%s\",\"channel\":%u,\"fw\":\"%s\"}\n",
+                  NODE_ID, ESPNowUtils::macToString(mac).c_str(), ESPNOW_CHANNEL, SPEEDX_FW_VERSION);
 }
 
 void setupESPNow() {
