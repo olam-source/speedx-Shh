@@ -112,7 +112,7 @@ public:
         if (ppg_.begin(Wire, I2C_SPEED_FAST)) {
             ppg_.setup();                       // SparkFun defaults: 50mA, 411us, 4-avg
             ppg_.setPulseAmplitudeRed(0x0A);    // dim red — IR drives beat detection
-            ppg_.setPulseAmplitudeIR(0x24);     // ponytail: ~7mA IR; raise if signal is weak
+            ppg_.setPulseAmplitudeIR(0x24);     // ~7mA IR; raise if signal is weak
             ppg_.setPulseAmplitudeGreen(0);     // MAX30102 has no green LED
             Serial.println("MAX30102 optical HR ready");
         } else {
@@ -215,7 +215,7 @@ private:
         buf[0] = 0x07;   // bit0 stride present | bit1 distance present | bit2 running
         uint16_t speed = static_cast<uint16_t>(m.speed_cm_s * 2.56f);   // cm/s -> (m/s)*256
         buf[1] = speed & 0xFF; buf[2] = speed >> 8;
-        // ponytail: RSC cadence is steps/min; halve it here if a watch shows 2x (strides).
+        // RSC cadence is steps/min; halve it if a watch expects strides.
         buf[3] = static_cast<uint8_t>(min<uint16_t>(m.cadence_spm, 255));
         uint16_t stride = m.stride_length_cm;                           // already 1/100 m
         buf[4] = stride & 0xFF; buf[5] = stride >> 8;
@@ -345,7 +345,7 @@ private:
     void updatePpg() {
         // SparkFun lib pulls the FIFO internally; getIR() returns the latest sample.
         long ir = ppg_.getIR();
-        if (ir < 50000) {            // ponytail: no skin contact; tune per wrist/arm coupling
+        if (ir < 50000) {            // no skin contact; tune per wrist/arm coupling
             bpmPpg_ = 0; hrEstimate_ = 0.0f; ppgCount_ = 0;
             return;
         }
@@ -360,7 +360,7 @@ private:
         // Motion-aware gate: this is the IMU earning its keep. While the arm is
         // swinging hard, a "beat" that jumps far from the running estimate is
         // almost certainly a footfall, not a pulse — so tighten the slew limit.
-        const float MOTION_GATE = 2.0f;              // ponytail: accelHpf units; tune on-arm
+        const float MOTION_GATE = 2.0f;              // accelHpf units; tune on-arm
         float maxJump = (motionLevel_ > MOTION_GATE) ? 12.0f : 30.0f;
         if (hrEstimate_ > 0.0f && fabsf(bpm - hrEstimate_) > maxJump) return;
 
@@ -480,7 +480,7 @@ private:
         m.ground_contact_ms = 0;     // not measurable from a torso/wrist IMU (needs a foot pod)
         m.vertical_oscillation_cm = voscCm_;
         m.elevation_gain_m = static_cast<int16_t>(elevationGainM_);
-        m.skin_temp_c_x10 = 0;   // ponytail: add NTC thermistor if skin temp needed
+        m.skin_temp_c_x10 = 0;   // add an NTC thermistor if skin temp is needed
         m.battery_mv = batteryMv_;
         m.lat_e7 = gpsFix_ ? static_cast<int32_t>(lastLat_ * 1e7) : 0;
         m.lon_e7 = gpsFix_ ? static_cast<int32_t>(lastLng_ * 1e7) : 0;

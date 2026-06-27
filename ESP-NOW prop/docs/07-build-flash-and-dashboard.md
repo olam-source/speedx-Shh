@@ -25,7 +25,7 @@ Defined in [`../platformio.ini`](../platformio.ini):
 | Env | Builds | Notes |
 |-----|--------|-------|
 | `coach_hub` | the USB hub | default env |
-| `athlete1` | simulated wearable | no sensors needed; set the real id over USB with `id <n>` |
+| `athlete1` | simulated wearable | no sensors needed; set the athlete id/team over USB with `id <hex>` / `team <n>` |
 | `athlete1_hw` | **real-sensor wearable** | `-DUSE_REAL_SENSORS` + `lib_deps` (MAX3010x, TinyGPSPlus, MPU6050) |
 
 > **Board id:** `esp32doit-devkit-v1`. (The original `esp32doit-devkit1` was
@@ -53,20 +53,19 @@ Set `upload_port` / `monitor_port` per board in `platformio.ini`. Common names:
 ### Adding athletes — one binary for the whole team ⭐
 
 Athlete IDs are set **at runtime over USB** and stored in NVS, so you flash the
-*same* binary to every wearable and assign identities afterward — no per-athlete
-compile. After flashing, open a serial monitor (115200) and type:
+*same* wearable binary to every board and assign identities afterward — no
+per-athlete compile. After flashing, open a serial monitor (115200) and type:
 
 ```
-id 12        # set this wearable's athlete id (1–249); saves + reboots
+id 12        # set this wearable's athlete id (hex, 1–FFFD); saves + reboots
 team 1       # set its team (0–255)
 info         # print current id / team / MAC
 reset-id     # revert to the build-flag default
 ```
 
-The build-flag `ATHLETE_NODE_ID` is now just the *default* if nothing is stored.
-The legacy per-athlete envs (`athlete2`, `athlete3`, …) still work, but you no
-longer need them — flash `athlete1` (or `athlete1_hw`) to every board and run
-`id N` once each. The mesh discovers new IDs automatically.
+The build-flag `ATHLETE_NODE_ID` is just the *default* if nothing is stored.
+Flash `athlete1` (or `athlete1_hw`) to every board and run `id N` once each.
+The mesh discovers new IDs automatically.
 
 ### Resource use (reference build)
 

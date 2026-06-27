@@ -1,11 +1,11 @@
-# SpeedX — Project Wiki 🏃‍♂️📡
+# SpeedX Firmware Docs
 
-> Router-free athlete-tracking mesh. ESP32 wearables read heart rate + running
-> stats and gossip them node-to-node until they reach a USB coach hub, where the
-> whole team shows up on one live screen.
+> Router-free athlete-tracking mesh. ESP32 wearables read heart rate and running
+> stats, relay them node-to-node, and hand them to a USB coach hub for live
+> display.
 
-This is the **developer knowledge base**. It's written as linked pages so it
-reads like a wiki on GitHub and imports cleanly into Notion
+This folder is the firmware project’s developer knowledge base. It is written as
+linked pages so it reads well on GitHub and imports cleanly into Notion
 (*Import → Markdown & CSV*, drop the whole `docs/` folder).
 
 ---
@@ -32,10 +32,10 @@ reads like a wiki on GitHub and imports cleanly into Notion
 | **What** | Wearable athlete telemetry over a self-healing ESP-NOW mesh |
 | **No** | Wi-Fi router, cell connection, or paid infrastructure |
 | **Scales to** | Any number of athletes — each wearable is also a relay |
-| **Coach view** | Desktop app (with athlete roster) **or** a zero-install browser screen — both live |
+| **Coach view** | Desktop app (with athlete roster) **or** a zero-install browser screen |
 | **Status** | Firmware complete & compiles to flashable ESP32 binaries; runs in simulation today, real-sensor build validated against vendor libraries |
 | **Firmware repo** | [github.com/olam-source/speedx-Shh](https://github.com/olam-source/speedx-Shh) |
-| **Coach app repo** | [github.com/olam-source/speedx-coach-app](https://github.com/olam-source/speedx-coach-app) (Electron desktop app + roster management) |
+| **Coach app repo** | [github.com/olam-source/speedx-coach-app](https://github.com/olam-source/speedx-coach-app) |
 
 ## 🔗 Source-of-truth files (outside this wiki)
 
@@ -44,6 +44,6 @@ reads like a wiki on GitHub and imports cleanly into Notion
 - [`../platformio.ini`](../platformio.ini) — build environments
 - [`../dashboard/coach_dashboard.html`](../dashboard/coach_dashboard.html) — the dashboard
 
-> **Keep one source of truth.** Code facts live in the source files; this wiki
-> explains and links to them. When something changes in the firmware, update the
-> page that points at it rather than copying code in.
+> **Keep one source of truth.** Code facts live in the source files; this docs
+> set explains and links to them. When firmware changes, update the page that
+> points at it rather than copying code in.

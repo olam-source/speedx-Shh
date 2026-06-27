@@ -6,9 +6,8 @@
 #include <cstring>
 
 // Logical node identifier. 16-bit gives ~65k addressable nodes (the coach app
-// shows these as hex). Widen to uint32_t here if a deployment ever needs more —
-// it's the single source of truth for the on-wire id width.
-// ponytail: uint16 covers any realistic team/league; bump to uint32 only if proven.
+// shows these as hex). Widen to uint32_t here only if a deployment ever needs
+// more; this type is the single source of truth for the on-wire id width.
 using node_id_t = uint16_t;
 
 // ===== ESP-NOW Configuration =====
