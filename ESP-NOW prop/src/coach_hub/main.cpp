@@ -178,6 +178,22 @@ void broadcastCoachCommand(CoachCommand command, node_id_t target, uint16_t para
 //   start            stop            reset
 //   lap [number]     identify [athlete_id in hex]
 //   cmd <num> <target-hex> <param>  (raw form)
+bool parseUnsignedArg(const String& text, uint8_t base, uint32_t minValue, uint32_t maxValue, uint32_t& out) {
+    if (text.length() == 0) {
+        return false;
+    }
+    char* end = nullptr;
+    unsigned long value = strtoul(text.c_str(), &end, base);
+    if (end == text.c_str() || *end != '\0') {
+        return false;
+    }
+    if (value < minValue || value > maxValue) {
+        return false;
+    }
+    out = static_cast<uint32_t>(value);
+    return true;
+}
+
 void handleSerialCommand(String line) {
     line.trim();
     if (line.length() == 0) {
@@ -197,11 +213,24 @@ void handleSerialCommand(String line) {
     } else if (verb == "reset") {
         broadcastCoachCommand(CoachCommand::RESET_BEST, COACH_TARGET_ALL, 0);
     } else if (verb == "lap") {
+        uint32_t lap = 0;
+        if (rest.length() && !parseUnsignedArg(rest, 10, 0, 65535, lap)) {
+            Serial.println("{\"t\":\"warn\",\"msg\":\"lap must be decimal 0-65535\"}");
+            return;
+        }
         broadcastCoachCommand(CoachCommand::MARK_LAP, COACH_TARGET_ALL,
-                              static_cast<uint16_t>(rest.toInt()));
+                              static_cast<uint16_t>(lap));
     } else if (verb == "identify") {
         // target athlete id is hex; bare "identify" targets everyone
-        node_id_t target = rest.length() ? static_cast<node_id_t>(strtol(rest.c_str(), nullptr, 16)) : COACH_TARGET_ALL;
+        node_id_t target = COACH_TARGET_ALL;
+        if (rest.length()) {
+            uint32_t parsed = 0;
+            if (!parseUnsignedArg(rest, 16, 1, NODE_ID_MAX, parsed)) {
+                Serial.println("{\"t\":\"warn\",\"msg\":\"identify target must be hex 1-FFFD\"}");
+                return;
+            }
+            target = static_cast<node_id_t>(parsed);
+        }
         broadcastCoachCommand(CoachCommand::IDENTIFY, target, 0);
     } else if (verb == "cmd") {
         // raw: cmd <command:dec> <target:hex> <param:dec>
@@ -212,9 +241,34 @@ void handleSerialCommand(String line) {
             rest = s < 0 ? "" : rest.substring(s + 1);
             rest.trim();
         }
-        CoachCommand c = static_cast<CoachCommand>(toks[0].toInt());
-        node_id_t target = (n > 1 && toks[1].length()) ? static_cast<node_id_t>(strtol(toks[1].c_str(), nullptr, 16)) : COACH_TARGET_ALL;
-        uint16_t param = n > 2 ? static_cast<uint16_t>(toks[2].toInt()) : 0;
+
+        uint32_t command = 0;
+        if (n < 1 || !parseUnsignedArg(toks[0], 10, 0, 255, command)) {
+            Serial.println("{\"t\":\"warn\",\"msg\":\"cmd requires command 0-255\"}");
+            return;
+        }
+
+        node_id_t target = COACH_TARGET_ALL;
+        if (n > 1 && toks[1].length()) {
+            uint32_t parsed = 0;
+            if (!parseUnsignedArg(toks[1], 16, 1, 0xFFFF, parsed)) {
+                Serial.println("{\"t\":\"warn\",\"msg\":\"cmd target must be hex 1-FFFF\"}");
+                return;
+            }
+            target = static_cast<node_id_t>(parsed);
+        }
+
+        uint16_t param = 0;
+        if (n > 2 && toks[2].length()) {
+            uint32_t parsed = 0;
+            if (!parseUnsignedArg(toks[2], 10, 0, 65535, parsed)) {
+                Serial.println("{\"t\":\"warn\",\"msg\":\"cmd param must be 0-65535\"}");
+                return;
+            }
+            param = static_cast<uint16_t>(parsed);
+        }
+
+        CoachCommand c = static_cast<CoachCommand>(command);
         broadcastCoachCommand(c, target, param);
     } else {
         Serial.printf("{\"t\":\"warn\",\"msg\":\"unknown command\",\"got\":\"%s\"}\n", verb.c_str());

@@ -244,6 +244,22 @@ void applyAndRestart(const char* what) {
     ESP.restart();
 }
 
+bool parseUnsignedArg(const String& text, uint8_t base, uint32_t minValue, uint32_t maxValue, uint32_t& out) {
+    if (text.length() == 0) {
+        return false;
+    }
+    char* end = nullptr;
+    unsigned long value = strtoul(text.c_str(), &end, base);
+    if (end == text.c_str() || *end != '\0') {
+        return false;
+    }
+    if (value < minValue || value > maxValue) {
+        return false;
+    }
+    out = static_cast<uint32_t>(value);
+    return true;
+}
+
 void handleSerialCommand(String line) {
     line.trim();
     if (line.length() == 0) return;
@@ -256,13 +272,19 @@ void handleSerialCommand(String line) {
 
     if (verb == "id") {
         // IDs are hex (e.g. "1a2b" or "0x1A2B"). base 16 accepts an optional 0x.
-        long v = strtol(arg.c_str(), nullptr, 16);
-        if (v < 1 || v > NODE_ID_MAX) { Serial.println("id must be hex 1-FFFD (FFFE=hub, FFFF=broadcast are reserved)"); return; }
+        uint32_t v = 0;
+        if (!parseUnsignedArg(arg, 16, 1, NODE_ID_MAX, v)) {
+            Serial.println("id must be hex 1-FFFD (FFFE=hub, FFFF=broadcast are reserved)");
+            return;
+        }
         prefs.putUShort("nid", static_cast<node_id_t>(v));
         applyAndRestart("athlete id");
     } else if (verb == "team") {
-        long v = arg.toInt();
-        if (v < 0 || v > 255) { Serial.println("team must be 0-255"); return; }
+        uint32_t v = 0;
+        if (!parseUnsignedArg(arg, 10, 0, 255, v)) {
+            Serial.println("team must be 0-255");
+            return;
+        }
         prefs.putUChar("team", static_cast<uint8_t>(v));
         applyAndRestart("team");
     } else if (verb == "info") {
