@@ -1,84 +1,66 @@
-# 2 · System Architecture
+# 2 · System Architecture (Pi + Garmin)
 
-[← Overview](01-overview.md) · [Wiki home](README.md) · Next: [Mesh Protocol →](03-mesh-protocol.md)
+[← Overview](01-overview.md) · [Wiki home](README.md)
 
 ---
 
-## Node roles
+## Components
 
-There are exactly two node roles.
+| Component | Count | Responsibility |
+|---|---:|---|
+| Garmin watches | Any | Emit athlete running telemetry |
+| Pi edge nodes | 4-6 | Collect nearby watch data, normalize packets, tag athlete/watch IDs |
+| Field router | 1 | Aggregates edge-node traffic and forwards to laptop |
+| Coach laptop app | 1 | Live dashboard, roster mapping, effort/stats view, recording/export |
 
-| Role | Node ID | Source | Job |
-|------|---------|--------|-----|
-| **Athlete wearable** | 11, 12, 13, … (unique) | [`../src/athlete_wearable/main.cpp`](../src/athlete_wearable/main.cpp) | Read sensors, gossip own metrics toward the hub, relay others' frames, obey coach commands |
-| **Coach hub** | 250 (`COACH_HUB_NODE_ID`) | [`../src/coach_hub/main.cpp`](../src/coach_hub/main.cpp) | Collect all metrics, stream JSON over USB, beacon for discovery, broadcast coach commands |
-
-`255` is the broadcast ID; `250` is reserved for the hub. Athletes take anything
-else.
-
-## The big picture
+## End-to-end data path
 
 ```mermaid
 flowchart LR
-    A11[Athlete 11] <-->|gossip| A12[Athlete 12]
-    A12 <-->|gossip| A13[Athlete 13]
-    A11 <-->|gossip| A13
-    A12 -->|reaches hub| HUB[Coach Hub - Node 250]
-    HUB -->|USB serial, JSON lines| LAP[Coach Laptop]
-    LAP -->|Web Serial| DASH[Coach App / Dashboard]
-    DASH -.->|coach commands| LAP
-    LAP -.-> HUB
-    HUB -.->|broadcast COACH_COMMAND| A12
+    W1[Garmin watch A]
+    W2[Garmin watch B]
+    W3[Garmin watch N]
+    P1[Pi node 1]
+    P2[Pi node 2]
+    P6[Pi node 6]
+    R[Field router]
+    L[Coach laptop]
+    A[SpeedX Coach app]
+
+    W1 --> P1
+    W2 --> P2
+    W3 --> P6
+    P1 --> R
+    P2 --> R
+    P6 --> R
+    R -->|NDJSON stream| L --> A
 ```
 
-## Data flow (one metric sample)
+## Packet contract (router -> app)
 
-```mermaid
-sequenceDiagram
-    participant S as Sensors
-    participant W as Wearable (Node 11)
-    participant R as Relay (Node 12)
-    participant H as Coach Hub (250)
-    participant D as Dashboard
+The app expects newline-delimited JSON where each line is one sample. Recommended
+minimum fields:
 
-    S->>W: HR, GPS, IMU, battery
-    Note over W: every 2 s build AthleteMetricsPayload
-    W->>R: ATHLETE_METRICS (gossip, TTL=4)
-    Note over R: dedupe + decrement TTL
-    R->>H: forward toward hub
-    H->>D: {"t":"athlete","id":11,...}\n (USB)
-    D->>D: upsert athlete card, render
+```json
+{"t":"garmin","id":12,"team":1,"heart_rate":162,"distance_m":1840,"run_cadence":178}
 ```
 
-## Three layers
+Supported fields include:
 
-1. **Shared library** (`../include/`) — frame format, send/receive helpers, peer
-   registry, sensor abstraction. Header-only; every node links the same code.
-2. **Node firmware** (`../src/`) — each role is a thin `main.cpp` that wires the
-   library together with role-specific behavior.
-3. **Host client** — reads the hub's USB JSON stream and renders the team. Two
-   interchangeable options:
-   - **SpeedX Coach desktop app** (Electron, separate repo
-     [`speedx-coach-app`](https://github.com/olam-source/speedx-coach-app)) —
-     adds athlete **roster management** (node id → name + team, saved to disk).
-   - **Browser dashboard** (`../dashboard/coach_dashboard.html`) — a single HTML
-     file, no install, athletes shown by node id.
+- identity/tagging: `id`, `team`, `watch_id`, `device_id`, `athlete_id`
+- core metrics: `heart_rate`, `pace_sec_per_mile`, `distance_m`, `speed_mps`,
+  `run_cadence`, `stride_length_cm`
+- effort: `effort_pct` (or compatible field names)
+- optional GPS and advanced metrics when available
 
-```
-include/   espnow_config.h · espnow_utils.h · peer_manager.h · athlete_sensors.h
-src/       athlete_wearable/ · coach_hub/
-dashboard/ coach_dashboard.html
-```
+## Reliability expectations
 
-Details of each file are in [Firmware & Code Map](04-firmware-and-code-map.md).
+1. Each Pi node buffers short outages and retries router publish.
+2. Router stream is line-delimited JSON so the coach app can recover from partial
+   lines cleanly.
+3. Athlete IDs must stay stable through a session for roster mapping.
 
-## Key design decisions
+## Compatibility
 
-| Decision | Why |
-|----------|-----|
-| **ESP-NOW, not Wi-Fi/BLE** | Connectionless, no router, low latency, ~200 m line-of-sight, built into every ESP32 |
-| **Gossip flooding, not routing tables** | Zero configuration; survives nodes joining/leaving; no single point of failure |
-| **Hub is a pure sink** | The coach laptop does the heavy UI; the hub just relays + prints, keeping it dumb and reliable |
-| **Line-delimited JSON over USB** | Trivially parseable by the browser, Python, a logger, Grafana — anything |
-| **Header-only shared lib** | One copy of the protocol; every node provably speaks the same format (enforced by `static_assert`) |
-| **Build-flag sensor backend** | Same firmware runs simulated (no hardware) or real (with `-DUSE_REAL_SENSORS`) |
+The coach app still accepts legacy `{"t":"athlete", ...}` packets during
+migration, so old and new emitters can coexist temporarily.

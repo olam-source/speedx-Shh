@@ -1,65 +1,36 @@
-# 1 · Overview
+# 1 · Overview (Pi + Garmin Migration)
 
 [← Wiki home](README.md) · Next: [System Architecture →](02-architecture.md)
 
 ---
 
-## The problem
+## New target system
 
-Coaches want live heart rate and running stats for **every athlete at once** —
-during track workouts, cross-country, or team runs. Existing options are bad for
-a team:
+SpeedX is moving to a distributed ingest system built around Garmin watches and
+Raspberry Pis:
 
-- **GPS watches / chest straps** report to *each athlete's own phone/app*, not a
-  single coach view, and pairing 30 of them is a nightmare.
-- **Stadium telemetry systems** are expensive and assume infrastructure.
-- **Wi-Fi / cellular** needs a router or SIM per device and dies the moment
-  athletes spread out across a field or trail.
-
-## The idea
-
-Give each athlete a cheap ESP32 wearable that reads their vitals and **passes
-them athlete-to-athlete** over ESP-NOW (a connectionless, router-free radio
-protocol built into every ESP32). Frames hop across the team until they reach a
-**coach hub** — an ESP32 on a USB cable plugged into the coach's laptop — which
-shows everyone on one screen.
-
-```
- (Athlete) <-> (Athlete) <-> (Athlete) <-> ...   gossip, no router
-                     |
-                [ Coach Hub ] --USB--> laptop --> one-screen dashboard
+```text
+Garmin watches -> 4-6 Raspberry Pi edge nodes -> field router -> coach laptop app
 ```
 
-## Why this approach
+## Why this redesign
 
-- **No infrastructure.** No router, no SIM, no cloud, no per-device account.
-- **Range grows with the team.** Every wearable is also a relay, so coverage
-  extends as you add athletes instead of degrading.
-- **Self-healing.** If an athlete moves out of range of one peer, their data
-  finds another path. Lose a node and the mesh routes around it.
-- **Cheap & buildable.** ~$20–25 per wearable from off-the-shelf modules; see
-  [Hardware & Budget](06-hardware-and-budget.md).
-- **One screen, zero install.** The coach opens an HTML file in Chrome/Edge — no
-  app, no setup. See [Build, Flash & Dashboard](07-build-flash-and-dashboard.md).
+1. **Use Garmin-native metrics directly.** Pull watch telemetry instead of
+   rebuilding a full wearable stack.
+2. **Scale in zones.** Multiple Pi nodes cover different parts of the field and
+   collapse traffic into one router uplink.
+3. **Coach-first workflow.** One app view for all athletes with effort, pace,
+   cadence, splits, distance, GPS, and other available Garmin running stats.
 
-## What it tracks
+## System goal
 
-Heart rate, pace per mile, current & best mile split, distance, speed, cadence,
-stride length, ground-contact time, vertical oscillation, elevation gain, skin
-temperature, battery, and radio link quality. What's measured vs. estimated is
-spelled out in [Sensors & Metrics](05-sensors-and-metrics.md).
+- Support **any number of Garmin watches**.
+- Keep each sample tagged to an athlete/watch identity.
+- Stream data to the coach app as line-delimited JSON for live rendering and
+  recording/export.
 
-## Who it's for
+## Transition note
 
-- **Track / XC / running coaches** who want real-time team telemetry.
-- **Makers / students** building an end-to-end IoT mesh project.
-- **Sports-tech tinkerers** who want a hackable, open platform instead of a
-  closed wearable ecosystem.
-
-## Current status
-
-The firmware is complete and compiles to flashable ESP32 binaries (verified with
-PlatformIO + the ESP32 toolchain). It runs today in **simulation mode** on a bare
-ESP32, and the **real-sensor build** is validated against the actual vendor
-libraries. Remaining work is physical: attach sensors, build enclosures, field
-test. See [Manufacturing & Roadmap](08-manufacturing-and-roadmap.md).
+The old ESP-NOW implementation remains in this repository as a legacy prototype.
+New development should target the Pi + Garmin architecture described in this doc
+set.
