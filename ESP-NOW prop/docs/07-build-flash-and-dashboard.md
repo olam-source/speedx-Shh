@@ -121,8 +121,9 @@ Click **Connect Hub**, choose the hub's port from the in-app chooser.
 
 ### Athlete management (the headline feature)
 
-- **Add / edit / remove athletes** in the sidebar, mapping a **node ID** (1–249)
-  to a **name** and **team**. Validates uniqueness and reserved ids (250/255).
+- **Add / edit / remove athletes** in the sidebar, mapping a **node ID**
+  (`0x0001`–`0xFFFD`) to a **name** and **team**. Validates uniqueness and
+  reserved IDs (`0xFFFE` hub, `0xFFFF` broadcast).
 - **Persisted** to `userData/roster.json`, so the roster survives restarts.
 - **Pre-register** athletes before a session — they appear as *offline* cards
   until their wearable reports.

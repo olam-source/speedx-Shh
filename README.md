@@ -1,48 +1,28 @@
-# SpeedX — Router-Free Athlete Tracking Mesh
+# SpeedX — Raspberry Pi + Garmin Telemetry System
 
-This repo holds the SpeedX ESP32 firmware, dashboard, and docs for the
-router-free athlete mesh. The actual PlatformIO project lives in
-`ESP-NOW prop/`.
+SpeedX is being migrated to a field architecture where **4-6 Raspberry Pi edge nodes** collect Garmin watch telemetry, tag samples by athlete/watch, and stream them to a router that forwards to the coach laptop app.
 
-Wearables relay athlete telemetry over ESP-NOW to a USB coach hub. The hub
-streams one JSON object per line to either the browser dashboard in this repo or
-the separate Electron coach app:
-
-- Browser dashboard: `ESP-NOW prop/dashboard/coach_dashboard.html`
-- Coach app: https://github.com/olam-source/speedx-coach-app
-
-## What's in here
-
-- `ESP-NOW prop/include/` — shared protocol, crypto, and sensor headers
-- `ESP-NOW prop/src/` — athlete wearable and coach hub firmware
-- `ESP-NOW prop/dashboard/` — zero-install browser dashboard
-- `ESP-NOW prop/docs/` — project wiki / source-of-truth docs
-- `ESP-NOW prop/HARDWARE.md` — parts list and wiring
-- `ESP-NOW prop/platformio.ini` — build environments
-
-## Current state
-
-- **Firmware v0.8.35** — version emitted in boot JSON (`fw` field).
-- Simulation build runs on a bare ESP32.
-- Real-sensor build uses MAX30102, MPU-6050, GPS, and battery ADC.
-- Wearables can be assigned IDs at runtime over USB (`id <hex>`, `team <n>`).
-- The coach hub emits line-delimited JSON over USB for dashboards and loggers.
-
-## Build
-
-```bash
-cd "ESP-NOW prop"
-pio run -e coach_hub
-pio run -e athlete1
-pio run -e athlete1_hw
+```text
+Garmin watches -> Pi edge nodes (4-6) -> router -> SpeedX Coach app
 ```
 
-```bash
-pio device monitor -e athlete1_hw
-```
+## Current repository role
 
-## Docs
+This repo currently contains the original ESP32/ESP-NOW prototype plus docs.
+The new system architecture and migration direction are documented in:
 
+- `ESP-NOW prop/docs/01-overview.md`
+- `ESP-NOW prop/docs/02-architecture.md`
 - `ESP-NOW prop/docs/README.md`
-- `ESP-NOW prop/dashboard/README.md`
-- `ESP-NOW prop/HARDWARE.md`
+- `pi-gateway/README.md` (starter router + Pi edge-node services)
+
+## Coach app
+
+The coach app now supports a **router TCP stream** for the new architecture:
+
+- https://github.com/olam-source/speedx-coach-app
+
+## Notes
+
+- Existing ESP-NOW firmware remains in this repo as a legacy baseline while Pi/Garmin services are rolled out.
+- Telemetry format is line-delimited JSON, including Garmin-style payload support in the app.
